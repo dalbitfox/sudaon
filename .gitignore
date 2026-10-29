@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+.vercel/
+.env
+.env.*
+!.env.example
+data/
+artifacts/
+*.log
+graft/
+.ignore

@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-10-29T17:15:15.364Z",
+  "environment": "isolated local Node/SQLite server, not Vercel or Windows",
+  "audience": 200,
+  "ownerConnections": 1,
+  "targetSteadySeconds": 90,
+  "actualSteadySeconds": 90.001,
+  "steadyMessages": 180,
+  "burstMessages": 20,
+  "originalMessages": 200,
+  "delivered": 40000,
+  "expectedDeliveries": 40000,
+  "lost": 0,
+  "duplicates": 0,
+  "p95Milliseconds": 227,
+  "elapsedSeconds": 94,
+  "passed": true
+}

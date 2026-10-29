@@ -1,0 +1,59 @@
+{
+  "name": "sudaon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "QR로 연결하는 발표용 실시간 채팅과 키워드",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "node server/start.mjs --dev",
+    "build": "vite build",
+    "start": "node server/start.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:load": "node scripts/load.mjs",
+    "desktop": "electron desktop/main.cjs",
+    "desktop:win": "npm run build && electron-builder --win portable --x64"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.0.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
+  },
+  "build": {
+    "appId": "app.sudaon.presenter",
+    "productName": "수다온",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "server/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "extraMetadata": {
+      "main": "desktop/main.cjs"
+    }
+  }
+}
