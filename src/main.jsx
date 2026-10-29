@@ -114,6 +114,7 @@ function Modal({ title, children, onClose }) {
   useEffect(() => {
     const before = document.activeElement;
     ref.current.showModal();
+    ref.current.querySelector('input:not([type="range"]):not([type="checkbox"]), textarea')?.focus();
     const dialog = ref.current;
     const close = () => onClose();
     dialog.addEventListener("cancel", close);
@@ -294,12 +295,14 @@ function KeywordPanel({ meta, compact = false, roomId, onError }) {
         <div className="segmented">
           <button
             className={mode === "rank" ? "selected" : ""}
+            aria-pressed={mode === "rank"}
             onClick={() => setMode("rank")}
           >
             인기 순위
           </button>
           <button
             className={mode === "cloud" ? "selected" : ""}
+            aria-pressed={mode === "cloud"}
             onClick={() => setMode("cloud")}
           >
             워드클라우드
@@ -517,11 +520,12 @@ function DisplaySettings({ roomId, onClose }) {
   return (
     <Modal title="발표 화면 설정" onClose={onClose}>
       <p className="muted">발표 자료를 가리지 않는 위치와 크기로 배치하세요.</p>
-      <label>
-        표시 구성
+      <fieldset className="display-layout">
+        <legend>표시 구성</legend>
         <div className="choice-grid">
           <button
             className={layout === "combined" ? "selected" : ""}
+            aria-pressed={layout === "combined"}
             onClick={() => setLayout("combined")}
           >
             <PanelsTopLeft size={24} />
@@ -530,6 +534,7 @@ function DisplaySettings({ roomId, onClose }) {
           </button>
           <button
             className={layout === "split" ? "selected" : ""}
+            aria-pressed={layout === "split"}
             onClick={() => setLayout("split")}
           >
             <Monitor size={24} />
@@ -537,7 +542,7 @@ function DisplaySettings({ roomId, onClose }) {
             <small>원하는 위치에 각각</small>
           </button>
         </div>
-      </label>
+      </fieldset>
       <label>
         배경 불투명도 <b>{opacity}%</b>
         <input
