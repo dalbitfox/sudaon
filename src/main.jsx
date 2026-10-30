@@ -654,6 +654,9 @@ function Dashboard({ health, owner, setOwner }) {
         .catch(() => {});
   }, [owner, health?.configured]);
   useEffect(() => {
+    if (owner && section === "history") load();
+  }, [owner, section]);
+  useEffect(() => {
     if (room.data?.room.status === "closed") load();
   }, [room.data?.room.status]);
   const login = async (e, local = false) => {
