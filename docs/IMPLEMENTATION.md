@@ -55,6 +55,15 @@
 - 실제 암호 입력은 사용자에게 넘겼으며, 로그인 후 운영 방 검증을 진행한다.
 - GitHub 연결 계정 `dalbitfox`의 저장소 메타데이터상 쓰기 권한은 확인되지만 Contents API의 실제 파일 생성은 `Resource not accessible by integration`(403)으로 거절됐다. 파일은 생성되지 않았다. CLI 역시 소유자 계정의 인증 수단이 없어 실패했다. GitHub 업로드·자동 배포는 여전히 미완료다.
 
+## 2026-10-31 GitHub 업로드 및 자동 검증
+
+- 사용자가 공식 GitHub CLI의 저장소·workflow 권한과 인증 저장을 명시적으로 승인하고 브라우저 인증을 완료했다. 인증 계정은 `dalbitfox`이며 비밀 토큰은 조회하거나 출력하지 않았다.
+- 공개 저장소 `https://github.com/dalbitfox/sudaon`의 `main`에 추적 파일 29개를 업로드했다. 로컬·원격 커밋 `d3e70f630eef6d9a73406ddd1aca06337ea87c52` 일치 및 GitHub에서 `package.json` 조회 성공을 확인했다. 앞서 기록한 업로드 차단은 해결되었다.
+- 실제 환경 파일·채팅 DB·빌드 결과물은 업로드에 포함하지 않았다. 추적 파일에서 알려진 GitHub 토큰·개인 키 패턴이 없음을 확인했다.
+- 업로드 후 로컬 통합 테스트 8개와 프로덕션 빌드가 통과했다. GitHub Actions 실행 `41126113107`의 `validate`도 성공했다. Windows 빌드는 별도로 진행 중이다.
+- 기존 Vercel 프로젝트에 `dalbitfox/sudaon` Git 연결이 이미 설정되어 있음을 UI에서 확인했다. 해당 푸시로 자동 생성된 운영 배포 `dpl_7jpzNnALRWHxLZfUqnLJH5UVCQQw`가 READY이고, GitHub의 Vercel 커밋 상태도 성공이다.
+- 공개 API의 `configured:true`를 확인했다. 실제 운영 방 생성·메시지 송수신은 사용자의 발표자 로그인 이후 검증한다.
+
 ## 개발 구조
 
 ```text
