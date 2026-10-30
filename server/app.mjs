@@ -13,6 +13,7 @@ import {
 } from "./model.mjs";
 import { auth as createAuth } from "./auth.mjs";
 import { localStore, redisStore } from "./store.mjs";
+import { cloudConfiguration } from "./config.mjs";
 
 const safeId = /^[A-Za-z0-9_-]{16}$/;
 const loopback = (address) =>
@@ -42,25 +43,17 @@ const sameSecret = (a, b) =>
 
 export async function createApplication(options = {}) {
   const cloud = options.cloud ?? Boolean(process.env.VERCEL);
+  const configuration = cloudConfiguration();
   const ownerPassword =
     options.ownerPassword || process.env.SUDAON_OWNER_PASSWORD;
   const configured =
     options.configured ??
-    (!cloud ||
-      Boolean(
-        process.env.SUDAON_SESSION_SECRET?.length >= 32 &&
-          ownerPassword?.length >= 12 &&
-          process.env.UPSTASH_REDIS_REST_URL &&
-          process.env.UPSTASH_REDIS_REST_TOKEN,
-      ));
+    (!cloud || configuration.configured);
   const store =
     options.store ||
     (configured
       ? cloud
-        ? redisStore({
-            url: process.env.UPSTASH_REDIS_REST_URL,
-            token: process.env.UPSTASH_REDIS_REST_TOKEN,
-          })
+        ? redisStore(configuration.redis)
         : await localStore(options.filename || process.env.SUDAON_DATA_FILE)
       : null);
   const secret = options.secret || process.env.SUDAON_SESSION_SECRET || store?.driver.sessionSecret || randomBytes(32).toString('hex');
@@ -110,6 +103,7 @@ export async function createApplication(options = {}) {
     res.json({
       ok: true,
       configured,
+      ...(!configured && cloud ? { setup: configuration.setup } : {}),
       mode: cloud ? "cloud" : "local",
       realtime: "websocket",
       maxParticipants: 200,

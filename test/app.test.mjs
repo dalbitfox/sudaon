@@ -10,6 +10,7 @@ import ExcelJS from "exceljs";
 import { createApplication } from "../server/app.mjs";
 import { keywords, tokens } from "../server/model.mjs";
 import { localStore } from "../server/store.mjs";
+import { cloudConfiguration } from "../server/config.mjs";
 
 const cookie = (response) =>
   response.headers.get("set-cookie")?.split(";")[0] || "";
@@ -428,7 +429,10 @@ test("keyword window expiration, duplicate words, exclusions and session counts"
 test("cloud without persistent configuration refuses writes rather than pretending to be online", async (t) => {
   const app = await setup({ cloud: true, configured: false });
   t.after(() => app.close());
-  assert.equal((await (await app.request("/health")).json()).configured, false);
+  const health = await (await app.request("/health")).json();
+  assert.equal(health.configured, false);
+  assert.deepEqual(Object.keys(health.setup).sort(), ["ownerPassword", "sessionSecret", "storage"]);
+  assert.ok(Object.values(health.setup).every((value) => typeof value === "boolean"));
   assert.equal(
     (
       await app.request("/rooms", {
@@ -438,4 +442,23 @@ test("cloud without persistent configuration refuses writes rather than pretendi
     ).status,
     503,
   );
+});
+
+test("cloud setup accepts Marketplace pairs without mixing partial credentials", () => {
+  const env = {
+    SUDAON_OWNER_PASSWORD: "test-only-owner-password",
+    SUDAON_SESSION_SECRET: "test-only-session-secret-32-characters",
+    KV_REST_API_URL: "https://marketplace.example.invalid",
+    KV_REST_API_TOKEN: "test-only-marketplace-token",
+    UPSTASH_REDIS_REST_URL: "https://partial.example.invalid",
+  };
+  const result = cloudConfiguration(env);
+  assert.equal(result.configured, true);
+  assert.equal(result.redis.url, env.KV_REST_API_URL);
+  assert.equal(result.redis.token, env.KV_REST_API_TOKEN);
+  const incomplete = cloudConfiguration({ ...env, KV_REST_API_TOKEN: undefined });
+  assert.equal(incomplete.configured, false);
+  assert.equal(incomplete.setup.storage, false);
+  assert.equal(cloudConfiguration({ ...env, SUDAON_OWNER_PASSWORD: "short" }).configured, false);
+  assert.equal(cloudConfiguration({ ...env, SUDAON_SESSION_SECRET: "short" }).configured, false);
 });

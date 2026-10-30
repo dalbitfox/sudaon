@@ -82,6 +82,40 @@ function Notice({ children }) {
     </div>
   ) : null;
 }
+function SetupPanel({ setup = {} }) {
+  const project = "https://vercel.com/dalbits-projects-8eb7a82d/sudaon";
+  return (
+    <section className="panel setup-panel">
+      <ShieldCheck size={35} />
+      <span className="eyebrow">최초 1회 · 서비스 소유자 설정</span>
+      <h2>방을 만들기 전에, 두 가지 설정이 필요해요</h2>
+      <p>현재 온라인 채팅은 아직 열리지 않았습니다. 아래 설정과 재배포를 마치면 발표자 로그인과 새 발표 만들기가 표시됩니다.</p>
+      <ol className="setup-steps">
+        <li>
+          <div className="setup-step-heading"><h3>대화 기록 저장소 연결</h3><span>{setup.storage ? "설정됨" : "설정 필요"}</span></div>
+          <p>Storage에서 Upstash for Redis를 만들고 <b>Free</b> 플랜을 선택한 뒤, 이 프로젝트의 Production에 연결해 주세요. 다른 프로젝트의 저장소는 연결하지 않아도 됩니다.</p>
+          <a href={`${project}/stores`} target="_blank" rel="noreferrer">Vercel Storage 열기 <ArrowUpRight size={15} /></a>
+        </li>
+        <li>
+          <div className="setup-step-heading"><h3>발표자 로그인 설정</h3><span>{setup.ownerPassword && setup.sessionSecret ? "설정됨" : "설정 필요"}</span></div>
+          <p>Environment Variables에서 아래 두 항목을 <b>Production</b>에 추가해 주세요. 실제 값은 이 화면이나 채팅에 보내지 마세요.</p>
+          <dl className="setup-variables">
+            <div><dt><code>SUDAON_OWNER_PASSWORD</code></dt><dd>발표자 암호 · 12자 이상 {setup.ownerPassword && <Check size={14} aria-label="설정됨" />}</dd></div>
+            <div><dt><code>SUDAON_SESSION_SECRET</code></dt><dd>세션 보호용 임의 문자열 · 32자 이상 {setup.sessionSecret && <Check size={14} aria-label="설정됨" />}</dd></div>
+          </dl>
+          <a href={`${project}/settings/environment-variables`} target="_blank" rel="noreferrer">환경 변수 설정 열기 <ArrowUpRight size={15} /></a>
+        </li>
+        <li>
+          <h3>재배포 후 발표 시작</h3>
+          <p>설정을 저장한 뒤 Deployments에서 최신 배포를 <b>Redeploy</b>해 주세요. Ready가 되면 이 화면을 새로 확인하고 발표자 암호로 로그인하세요.</p>
+          <a href={`${project}/deployments`} target="_blank" rel="noreferrer">배포 화면 열기 <ArrowUpRight size={15} /></a>
+        </li>
+      </ol>
+      <Button variant="secondary" onClick={() => location.reload()}><RotateCcw size={16} />설정 상태 다시 확인</Button>
+      <p className="setup-footnote">표시 상태는 현재 배포의 설정 유무입니다. 실제 저장소 연결은 로그인과 방 생성 시 확인됩니다. 청중은 발표자가 만든 QR로 입장합니다.</p>
+    </section>
+  );
+}
 function Empty({ icon: Icon = MessagesSquare, title, children, action }) {
   return (
     <div className="empty">
@@ -821,25 +855,7 @@ function Dashboard({ health, owner, setOwner }) {
           </div>
           <Notice>{error || room.error}</Notice>
           {!health?.configured ? (
-            <section className="panel setup-panel">
-              <ShieldCheck size={35} />
-              <h2>수다온을 시작할 준비를 하고 있어요</h2>
-              <p>
-                모바일 웹은 준비되었습니다. 온라인 대화와 기록 보관을 위해 운영
-                저장소와 발표자 인증 설정이 필요합니다.
-              </p>
-              <p className="muted">
-                설정을 마치기 전에는 방을 만들거나 메시지를 임시로 저장하지
-                않습니다. Windows 로컬 앱에서는 바로 시작할 수 있습니다.
-              </p>
-              <a
-                href="https://github.com/dalbitfox/sudaon#배포"
-                target="_blank"
-                rel="noreferrer"
-              >
-                운영 설정 안내 <ArrowUpRight size={15} />
-              </a>
-            </section>
+            <SetupPanel setup={health?.setup} />
           ) : !owner ? (
             <section className="panel login-panel">
               <div className="login-illustration">
