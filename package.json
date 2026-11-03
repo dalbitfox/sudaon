@@ -14,7 +14,7 @@
     "test": "node --test test/*.test.mjs",
     "test:load": "node scripts/load.mjs",
     "desktop": "electron desktop/main.cjs",
-    "desktop:win": "npm run build && electron-builder --win nsis --x64"
+    "desktop:win": "npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "express": "^5.1.0",
