@@ -35,6 +35,16 @@ export function auth(secret, secure) {
         .map(([k, v]) => [k, v]),
     );
   const owner = (req) => verify(cookies(req).sudaon_owner)?.role === "owner";
+  const display = (req, roomId, explicitToken = "") => {
+    const candidate =
+      explicitToken ||
+      req.query?.dt ||
+      cookies(req)[`sudaon_display_${roomId}`] ||
+      "";
+    if (!candidate) return false;
+    const data = verify(String(candidate));
+    return data?.role === "display" && data?.roomId === roomId;
+  };
   const guest = (req, roomId) => {
     const data = verify(cookies(req)[`sudaon_guest_${roomId}`]);
     return data?.roomId === roomId ? data : null;
@@ -51,6 +61,7 @@ export function auth(secret, secure) {
     sign,
     verify,
     owner,
+    display,
     guest,
     set,
     requireOwner: (req, res, next) =>

@@ -10,7 +10,15 @@ redis.call('SADD', KEYS[2], ARGV[3])
 return 1`;
 const LEASE = `
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-if not redis.call('ZSCORE', KEYS[1], ARGV[2]) and redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[4]) then return 0 end
+local isOwner = string.sub(ARGV[2], 1, 6) == 'owner:'
+if not isOwner and not redis.call('ZSCORE', KEYS[1], ARGV[2]) then
+  local allMembers = redis.call('ZRANGE', KEYS[1], 0, -1)
+  local audience = 0
+  for _, m in ipairs(allMembers) do
+    if string.sub(m, 1, 6) ~= 'owner:' then audience = audience + 1 end
+  end
+  if audience >= tonumber(ARGV[4]) then return 0 end
+end
 redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
 redis.call('EXPIRE', KEYS[1], 120)
 return 1`;
@@ -28,13 +36,16 @@ export class EventStore {
     this.locks = new Map();
     this.limits = new Map();
   }
-  async limit(key, maximum = 8, seconds = 60) {
+  async limit(key, maximum = 8, seconds = 60, message) {
+    const errMsg =
+      message || "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+    if (key.startsWith("login:") && !message) {
+      message = "로그인 시도가 많습니다. 1분 후 다시 시도해 주세요.";
+    }
+    const finalMsg = message || errMsg;
     if (this.driver.limit) {
       if ((await this.driver.limit(key, seconds)) > maximum)
-        throw new AppError(
-          429,
-          "로그인 시도가 많습니다. 1분 후 다시 시도해 주세요.",
-        );
+        throw new AppError(429, finalMsg);
       return;
     }
     const now = Date.now();
@@ -46,11 +57,7 @@ export class EventStore {
     };
     row.count++;
     this.limits.set(key, row);
-    if (row.count > maximum)
-      throw new AppError(
-        429,
-        "로그인 시도가 많습니다. 1분 후 다시 시도해 주세요.",
-      );
+    if (row.count > maximum) throw new AppError(429, finalMsg);
   }
   async state(roomId) {
     let cached = this.cache.get(roomId) || { state: null, loaded: 0 };
@@ -125,8 +132,22 @@ export class EventStore {
   async presence(roomId, participantId, remove = false) {
     return this.driver.presence(roomId, participantId, remove);
   }
+  async members(roomId) {
+    if (this.driver.members) return this.driver.members(roomId);
+    return [];
+  }
   async count(roomId) {
     return this.driver.count(roomId);
+  }
+  async kvSet(key, value, seconds = 600) {
+    if (this.driver.kvSet) return this.driver.kvSet(key, value, seconds);
+  }
+  async kvGet(key, consume = false) {
+    if (this.driver.kvGet) return this.driver.kvGet(key, consume);
+    return null;
+  }
+  async kvDel(key) {
+    if (this.driver.kvDel) return this.driver.kvDel(key);
   }
   async close() {
     this.driver.close?.();
@@ -145,13 +166,19 @@ export async function localStore(filename) {
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS events (room TEXT NOT NULL, seq INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(room, seq));
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-  db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)').run('session-secret',randomBytes(32).toString('hex'));
-  const sessionSecret = db.prepare('SELECT value FROM settings WHERE key = ?').get('session-secret').value;
+  db.prepare("INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)").run(
+    "session-secret",
+    randomBytes(32).toString("hex"),
+  );
+  const sessionSecret = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get("session-secret").value;
   const leases = new Map();
+  const ephemeral = new Map();
   const active = (roomId) => {
     const group = leases.get(roomId) || new Map();
-    for (const [key, expires] of group)
-      if (expires < Date.now()) group.delete(key);
+    const now = Date.now();
+    for (const [key, expires] of group) if (expires < now) group.delete(key);
     leases.set(roomId, group);
     return group;
   };
@@ -199,7 +226,11 @@ export async function localStore(filename) {
         group.delete(participantId);
         return true;
       }
-      if (!group.has(participantId) && group.size >= 200)
+      const isOwner = String(participantId).startsWith("owner:");
+      const audienceCount = [...group.keys()].filter(
+        (k) => !String(k).startsWith("owner:"),
+      ).length;
+      if (!isOwner && !group.has(participantId) && audienceCount >= 200)
         throw new AppError(
           409,
           "채팅방이 가득 찼습니다. 최대 200명이 참여할 수 있습니다.",
@@ -207,7 +238,33 @@ export async function localStore(filename) {
       group.set(participantId, Date.now() + 65000);
       return true;
     },
-    count: async (roomId) => active(roomId).size,
+    members: async (roomId) => [...active(roomId).keys()],
+    count: async (roomId) =>
+      [...active(roomId).keys()].filter((k) => !String(k).startsWith("owner:"))
+        .length,
+    kvSet: async (key, value, seconds = 600) => {
+      const now = Date.now();
+      for (const [k, row] of ephemeral) {
+        if (row.exp <= now) ephemeral.delete(k);
+      }
+      ephemeral.set(key, {
+        value: structuredClone(value),
+        exp: now + seconds * 1000,
+      });
+    },
+    kvGet: async (key, consume = false) => {
+      const entry = ephemeral.get(key);
+      if (!entry) return null;
+      if (entry.exp <= Date.now()) {
+        ephemeral.delete(key);
+        return null;
+      }
+      if (consume) ephemeral.delete(key);
+      return structuredClone(entry.value);
+    },
+    kvDel: async (key) => {
+      ephemeral.delete(key);
+    },
     close: () => db.close(),
   });
 }
@@ -285,6 +342,41 @@ export function redisStore({ url, token, prefix = "sudaon:v1" }) {
       }
       return true;
     },
-    count: (roomId) => command("ZCOUNT", leasesKey(roomId), Date.now(), "+inf"),
+    members: async (roomId) =>
+      (await command("ZRANGEBYSCORE", leasesKey(roomId), Date.now(), "+inf")) ||
+      [],
+    count: async (roomId) => {
+      const list =
+        (await command(
+          "ZRANGEBYSCORE",
+          leasesKey(roomId),
+          Date.now(),
+          "+inf",
+        )) || [];
+      return list.filter((k) => !String(k).startsWith("owner:")).length;
+    },
+    kvSet: async (key, value, seconds = 600) => {
+      await command(
+        "SET",
+        `${prefix}:ephemeral:${key}`,
+        JSON.stringify(value),
+        "EX",
+        seconds,
+      );
+    },
+    kvGet: async (key, consume = false) => {
+      const fullKey = `${prefix}:ephemeral:${key}`;
+      const raw = await command("GET", fullKey);
+      if (!raw) return null;
+      if (consume) await command("DEL", fullKey);
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    },
+    kvDel: async (key) => {
+      await command("DEL", `${prefix}:ephemeral:${key}`);
+    },
   });
 }

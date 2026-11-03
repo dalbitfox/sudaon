@@ -14,7 +14,7 @@
     "test": "node --test test/*.test.mjs",
     "test:load": "node scripts/load.mjs",
     "desktop": "electron desktop/main.cjs",
-    "desktop:win": "npm run build && electron-builder --win portable --x64"
+    "desktop:win": "npm run build && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "express": "^5.1.0",
@@ -39,6 +39,14 @@
   "build": {
     "appId": "app.sudaon.presenter",
     "productName": "수다온",
+    "protocols": [
+      {
+        "name": "SudaOn Display Launcher",
+        "schemes": [
+          "sudaon"
+        ]
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -49,8 +57,24 @@
       "package.json"
     ],
     "win": {
-      "target": "portable",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "artifactName": "SudaOn-Setup.exe"
     },
     "extraMetadata": {
       "main": "desktop/main.cjs"

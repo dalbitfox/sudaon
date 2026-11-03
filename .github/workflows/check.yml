@@ -5,7 +5,7 @@ on:
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -36,3 +36,15 @@ jobs:
           name: SudaOn-Windows-x64
           path: release/*.exe
           retention-days: 14
+      - name: Publish SudaOn-Setup.exe to Latest GitHub Release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view desktop-latest >/dev/null 2>&1; then
+            gh release upload desktop-latest release/SudaOn-Setup.exe --clobber
+            gh release edit desktop-latest --latest --title "수다온 Windows 투명 오버레이 앱 (최신)" --notes "웹 대시보드 [발표 화면 띄우기] 자동 다운로드·원클릭 설치·자동 실행 파일 (SudaOn-Setup.exe)"
+          else
+            gh release create desktop-latest release/SudaOn-Setup.exe --latest --title "수다온 Windows 투명 오버레이 앱 (최신)" --notes "웹 대시보드 [발표 화면 띄우기] 자동 다운로드·원클릭 설치·자동 실행 파일 (SudaOn-Setup.exe)"
+          fi
