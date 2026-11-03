@@ -14,6 +14,8 @@ QR로 청중을 초대하고, 별명 하나로 실시간 대화를 나누는 발
 
 Windows 휴대용 실행 파일은 `npm run desktop:win`으로 생성하며, GitHub Actions도 Windows 빌드를 제공합니다. 빌드 결과를 받은 사용자는 실행 파일을 열면 됩니다. 개발 환경에서는 `release/수다온 0.1.0.exe`에 생성됩니다.
 
+검증된 Windows 빌드(`7bd82cf`)는 [GitHub Actions 실행 결과](https://github.com/dalbitfox/sudaon/actions/runs/41126979155)의 **SudaOn-Windows-x64**에서 ZIP으로 받을 수 있습니다. 압축을 풀고 **수다온 0.1.0.exe**를 실행합니다. Actions 산출물 보관 기간은 14일이며, 이후에는 최신 성공 빌드를 사용하거나 Actions에서 다시 빌드할 수 있습니다.
+
 1. 앱을 열고 **이 컴퓨터에서 시작하기**를 누릅니다.
 2. **새 발표 만들기**에서 발표 제목을 입력합니다.
 3. 공개 주소가 연결된 상태에서 QR을 청중에게 보여줍니다. PC 전용 주소의 QR에는 공개 주소 연결 안내가 표시됩니다.

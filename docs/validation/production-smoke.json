@@ -1,0 +1,64 @@
+{
+  "transport": "websocket",
+  "audienceAEventReceived": true,
+  "replyAccepted": true,
+  "duplicateReturnedSameId": true,
+  "aMessageCount": 1,
+  "bMessageCount": 1,
+  "verifiedAt": "2026-10-30T20:52:45.187Z",
+  "export": {
+    "sheets": [
+      {
+        "name": "발표 요약",
+        "rows": 5
+      },
+      {
+        "name": "채팅 기록",
+        "rows": 3
+      },
+      {
+        "name": "전체 키워드",
+        "rows": 13
+      },
+      {
+        "name": "집계 기준",
+        "rows": 6
+      }
+    ],
+    "expectedMessagesFound": true
+  },
+  "replyDedupeHistoryCheckMs": 1207,
+  "timingNote": "Combined reply, duplicate request and history-read checks; not a broadcast latency percentile.",
+  "historyNavigationRegression": {
+    "sourceCommit": "7bd82cf153030fad2aadf3582d88d0bf8a8066c8",
+    "desktopViewportWidth": 1280,
+    "expectedMessageCount": 3,
+    "expectedParticipantSessions": 2,
+    "passed": true
+  },
+  "resumedVerification": {
+    "dateKST": "2026-11-04",
+    "productionDeployment": "dpl_7Mf5BKXPEdi3sYJoAJPzoW1TqCSQ",
+    "configured": true,
+    "originalTestMessagesRetained": true,
+    "closedRoomAdmissionHTTP": 410,
+    "roomLifecycle": "Already closed when resumed; no user rooms were modified."
+  },
+  "windowsBuild": {
+    "runId": 41126979155,
+    "commit": "7bd82cf153030fad2aadf3582d88d0bf8a8066c8",
+    "conclusion": "success",
+    "artifactId": 13011701190,
+    "artifactSha256": "0912c6b143adb01038b7bd6e4f4d7bafce589caba09f78a1f97d37e634edabe0",
+    "exeBytes": 114010439,
+    "exeSha256": "c9716c5f4589e147853ef7d0016d143cc84ae92305f6ae1847802e7f44b4ada3",
+    "peHeaderVerified": true,
+    "executedOnWindows": false
+  },
+  "limitations": [
+    "No cloud 200-participant or long-duration load verification.",
+    "No actual Windows PPT, Excel, fullscreen or multi-monitor verification.",
+    "Embedded-browser popup launch unverified; direct display route rendered chat and keywords.",
+    "No monthly free-tier usage guarantee."
+  ]
+}
