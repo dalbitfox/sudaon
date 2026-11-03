@@ -247,6 +247,8 @@ export function applyEvent(state, e) {
   return next;
 }
 
+const IDLE_AWAY_MS = 60_000;
+
 export function useRoom(roomId, enabled, audience = false, display = false) {
   const [data, setData] = useState(null);
   const [connection, setConnection] = useState("connecting");
@@ -257,10 +259,72 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
     all: [],
     online: 0,
     onlineTotal: 0,
+    activeOnlineCount: 0,
+    awayCount: 0,
     onlineParticipants: [],
+    readCursors: {},
   });
   const [revision, setRevision] = useState(0);
+  const socketRef = useRef(null);
+  const lastSentReadSeqRef = useRef(0);
+  const pendingReadSeqRef = useRef(0);
+  const readDebounceRef = useRef(null);
+  const presenceStatusRef = useRef("online");
+
   const retry = useCallback(() => setRevision((v) => v + 1), []);
+
+  const sendPresence = useCallback(
+    (patch, { urgent = false } = {}) => {
+      if (!roomId || !enabled || display) return;
+      const ws = socketRef.current;
+      let sentViaWs = false;
+      if (ws && ws.readyState === 1) {
+        try {
+          ws.send(JSON.stringify({ type: "presence", ...patch }));
+          sentViaWs = true;
+        } catch {}
+      }
+      if (urgent || !sentViaWs) {
+        fetch(`/api/rooms/${roomId}/presence${audience ? "?audience=1" : ""}`, {
+          method: "POST",
+          credentials: "include",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        }).catch(() => {});
+      }
+    },
+    [roomId, enabled, audience, display],
+  );
+
+  const reportRead = useCallback(
+    (seq) => {
+      if (!roomId || !enabled || display) return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
+      const target = Math.floor(Number(seq) || 0);
+      if (target <= 0 || target <= lastSentReadSeqRef.current) return;
+      pendingReadSeqRef.current = Math.max(pendingReadSeqRef.current, target);
+      if (readDebounceRef.current) return;
+      readDebounceRef.current = setTimeout(() => {
+        readDebounceRef.current = null;
+        const nextSeq = pendingReadSeqRef.current;
+        if (nextSeq <= lastSentReadSeqRef.current) return;
+        lastSentReadSeqRef.current = nextSeq;
+        sendPresence({
+          readSeq: nextSeq,
+          ...(presenceStatusRef.current === "online"
+            ? { status: "online" }
+            : {}),
+        });
+      }, 70);
+    },
+    [roomId, enabled, display, sendPresence],
+  );
+
   const refreshRoom = useCallback(async () => {
     if (!roomId) return;
     try {
@@ -272,10 +336,125 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
         ...cur,
         online: fresh.online ?? cur.online,
         onlineTotal: fresh.onlineTotal ?? cur.onlineTotal,
+        activeOnlineCount: fresh.activeOnlineCount ?? cur.activeOnlineCount,
+        awayCount: fresh.awayCount ?? cur.awayCount,
         onlineParticipants: fresh.onlineParticipants || cur.onlineParticipants,
+        readCursors: fresh.readCursors || cur.readCursors,
       }));
     } catch {}
   }, [roomId, audience]);
+
+  useEffect(() => {
+    lastSentReadSeqRef.current = 0;
+    pendingReadSeqRef.current = 0;
+    presenceStatusRef.current =
+      typeof document !== "undefined" && document.visibilityState === "hidden"
+        ? "away"
+        : "online";
+    return () => {
+      if (readDebounceRef.current) {
+        clearTimeout(readDebounceRef.current);
+        readDebounceRef.current = null;
+      }
+    };
+  }, [roomId, enabled]);
+
+  useEffect(() => {
+    if (!roomId || !enabled || display || typeof window === "undefined") return;
+    let idleTimer = null;
+    let lastMoveAt = 0;
+
+    const armIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (presenceStatusRef.current !== "away") {
+          presenceStatusRef.current = "away";
+          sendPresence({ status: "away" });
+        }
+      }, IDLE_AWAY_MS);
+    };
+
+    const markAway = (urgent = false) => {
+      clearTimeout(idleTimer);
+      if (presenceStatusRef.current === "away" && !urgent) return;
+      presenceStatusRef.current = "away";
+      sendPresence({ status: "away" }, { urgent });
+    };
+
+    const markActive = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
+      armIdleTimer();
+      if (presenceStatusRef.current !== "online") {
+        presenceStatusRef.current = "online";
+        const latestRead = Math.max(
+          lastSentReadSeqRef.current,
+          pendingReadSeqRef.current,
+        );
+        sendPresence({
+          status: "online",
+          ...(latestRead > 0 ? { readSeq: latestRead } : {}),
+        });
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        markAway(true);
+      } else {
+        markActive();
+        const ws = socketRef.current;
+        if (!ws || ws.readyState > 1) {
+          setRevision((v) => v + 1);
+        }
+      }
+    };
+
+    const onPageHide = () => markAway(true);
+    const onMouseMove = () => {
+      const now = Date.now();
+      if (now - lastMoveAt < 2000) return;
+      lastMoveAt = now;
+      markActive();
+    };
+
+    if (document.visibilityState === "hidden") {
+      markAway(false);
+    } else {
+      armIdleTimer();
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("focus", markActive);
+    window.addEventListener("pageshow", markActive);
+    window.addEventListener("pointerdown", markActive, { passive: true });
+    window.addEventListener("keydown", markActive, { passive: true });
+    window.addEventListener("touchstart", markActive, { passive: true });
+    window.addEventListener("wheel", markActive, { passive: true });
+    window.addEventListener("scroll", markActive, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("mousemove", onMouseMove, { passive: true });
+
+    return () => {
+      clearTimeout(idleTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("focus", markActive);
+      window.removeEventListener("pageshow", markActive);
+      window.removeEventListener("pointerdown", markActive);
+      window.removeEventListener("keydown", markActive);
+      window.removeEventListener("touchstart", markActive);
+      window.removeEventListener("wheel", markActive);
+      window.removeEventListener("scroll", markActive, { capture: true });
+      window.removeEventListener("mousemove", onMouseMove);
+    };
+  }, [roomId, enabled, display, sendPresence]);
 
   useEffect(() => {
     if (!roomId || !enabled) {
@@ -307,7 +486,10 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
       all: [],
       online: 0,
       onlineTotal: 0,
+      activeOnlineCount: 0,
+      awayCount: 0,
       onlineParticipants: [],
+      readCursors: {},
     });
     setConnection("connecting");
     setError("");
@@ -325,10 +507,30 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/socket?${qs}`,
       );
+      socketRef.current = socket;
       socket.onopen = () => {
         retries = 0;
         setConnection("online");
         setError("");
+        if (!display) {
+          const isHidden =
+            typeof document !== "undefined" &&
+            document.visibilityState === "hidden";
+          const currentStatus = isHidden ? "away" : presenceStatusRef.current;
+          const latestRead = Math.max(
+            lastSentReadSeqRef.current,
+            pendingReadSeqRef.current,
+          );
+          try {
+            socket.send(
+              JSON.stringify({
+                type: "presence",
+                status: currentStatus,
+                ...(latestRead > 0 && !isHidden ? { readSeq: latestRead } : {}),
+              }),
+            );
+          } catch {}
+        }
       };
       socket.onmessage = (message) => {
         const payload = JSON.parse(message.data);
@@ -338,8 +540,12 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
             ...current,
             online: payload.data.online ?? current.online,
             onlineTotal: payload.data.onlineTotal ?? current.onlineTotal,
+            activeOnlineCount:
+              payload.data.activeOnlineCount ?? current.activeOnlineCount,
+            awayCount: payload.data.awayCount ?? current.awayCount,
             onlineParticipants:
               payload.data.onlineParticipants || current.onlineParticipants,
+            readCursors: payload.data.readCursors || current.readCursors,
           }));
         }
         if (payload.type === "event") {
@@ -384,6 +590,7 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
         }
       };
       socket.onclose = (event) => {
+        if (socketRef.current === socket) socketRef.current = null;
         if (disposed) return;
         if (event.code === 4003) {
           setConnection("denied");
@@ -417,7 +624,18 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
           ...current,
           online: initial.online,
           onlineTotal: initial.onlineTotal ?? initial.online,
+          activeOnlineCount:
+            initial.activeOnlineCount ??
+            (initial.onlineParticipants || []).filter(
+              (u) => u.status !== "away",
+            ).length,
+          awayCount:
+            initial.awayCount ??
+            (initial.onlineParticipants || []).filter(
+              (u) => u.status === "away",
+            ).length,
           onlineParticipants: initial.onlineParticipants || [],
+          readCursors: initial.readCursors || {},
         }));
         if (initial.owner || display)
           api(
@@ -438,6 +656,7 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
     return () => {
       disposed = true;
       clearTimeout(timer);
+      if (socketRef.current === socket) socketRef.current = null;
       socket?.close();
     };
   }, [roomId, enabled, revision, audience, display]);
@@ -470,6 +689,7 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
     retry,
     earlier,
     refreshRoom,
+    reportRead,
   };
 }
 

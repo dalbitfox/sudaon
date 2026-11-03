@@ -901,3 +901,179 @@ test("Upgrade 6: Display Launch Token (sudaon:// Windows App bridge) & read-only
 
   displayWs.close();
 });
+
+test("Upgrade 7: KakaoTalk unread count (10 -> 9 -> 6 -> 0), Online/Away presence badges, and explicit-only Leave messages", async (t) => {
+  const app = await setup({
+    disconnectGraceMs: 60,
+    autoCloseGraceMs: 90,
+  });
+  t.after(() => app.close());
+
+  const room = (
+    await (
+      await app.request("/rooms", {
+        method: "POST",
+        token: app.owner,
+        body: { title: "카카오톡 읽음 수 & 자리비움 검증방" },
+      })
+    ).json()
+  ).room;
+
+  // Join 10 participants
+  const guests = [];
+  for (let i = 1; i <= 10; i++) {
+    const res = await app.request(`/rooms/${room.id}/join`, {
+      method: "POST",
+      body: { nickname: `참여자${i}`, device: i <= 5 ? "mobile" : "pc" },
+    });
+    assert.equal(res.status, 201);
+    const data = await res.json();
+    guests.push({ index: i, id: data.me, token: cookie(res) });
+  }
+
+  const computeUnread = (snap, msg) =>
+    snap.onlineParticipants.filter(
+      (u) =>
+        u.id !== msg.participantId &&
+        (snap.readCursors[u.id] ?? u.readSeq ?? 0) < msg.seq,
+    ).length;
+
+  // 1) Guest 1 sends a message -> 10 members total, 1 read (sender) -> unread MUST be 9!
+  const msgRes = await app.request(`/rooms/${room.id}/messages?audience=1`, {
+    method: "POST",
+    token: guests[0].token,
+    body: { text: "안녕하세요 10명 카톡 읽음 테스트!", requestId: "kakao-read-01" },
+  });
+  assert.equal(msgRes.status, 201);
+  const msg = await msgRes.json();
+
+  let snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  assert.equal(snap.onlineTotal, 10);
+  assert.equal(snap.activeOnlineCount, 10);
+  assert.equal(snap.awayCount, 0);
+  assert.equal(computeUnread(snap, msg), 9);
+
+  // 2) 3 more guests (g2, g3, g4) read the message -> 4 total read -> unread MUST be 6!
+  for (const g of [guests[1], guests[2], guests[3]]) {
+    const pRes = await app.request(`/rooms/${room.id}/presence?audience=1`, {
+      method: "POST",
+      token: g.token,
+      body: { status: "online", readSeq: msg.seq },
+    });
+    assert.equal(pRes.status, 200);
+  }
+  snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  assert.equal(computeUnread(snap, msg), 6);
+
+  // 3) Remaining 6 guests read -> all 10 read -> unread MUST be 0!
+  for (const g of guests.slice(4)) {
+    await app.request(`/rooms/${room.id}/presence?audience=1`, {
+      method: "POST",
+      token: g.token,
+      body: { status: "online", readSeq: msg.seq },
+    });
+  }
+  snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  assert.equal(computeUnread(snap, msg), 0);
+
+  // 4) Mobile Guest 2 connects WS, then turns screen off (away + WS closes WITHOUT /leave)
+  let g2Ws = new WebSocket(
+    `${app.base.replace("http", "ws")}/api/socket?room=${room.id}&audience=1`,
+    { headers: { Cookie: guests[1].token } },
+  );
+  await once(g2Ws, "open");
+
+  await app.request(`/rooms/${room.id}/presence?audience=1`, {
+    method: "POST",
+    token: guests[1].token,
+    body: { status: "away" },
+  });
+  g2Ws.close();
+  await once(g2Ws, "close");
+  await wait(140); // Wait past disconnectGraceMs
+
+  snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  // MUST NOT emit "퇴장하셨습니다." and room stays open with Guest 2 marked "away" ("자리비움")
+  assert.equal(
+    snap.systemMessages.filter((s) => s.kind === "leave").length,
+    0,
+  );
+  assert.equal(snap.room.status, "open");
+  assert.equal(snap.onlineTotal, 10);
+  const g2InfoAway = snap.onlineParticipants.find((u) => u.id === guests[1].id);
+  assert.equal(g2InfoAway?.status, "away");
+  assert.equal(snap.awayCount, 1);
+  assert.equal(snap.activeOnlineCount, 9);
+
+  // 5) Mobile Guest 2 turns screen back ON (reconnects WS + join check + online presence) -> NO duplicate "입장하셨습니다."!
+  const joinCountBefore = snap.systemMessages.filter(
+    (s) => s.kind === "join",
+  ).length;
+  assert.equal(joinCountBefore, 10);
+
+  g2Ws = new WebSocket(
+    `${app.base.replace("http", "ws")}/api/socket?room=${room.id}&audience=1`,
+    { headers: { Cookie: guests[1].token } },
+  );
+  await once(g2Ws, "open");
+  await app.request(`/rooms/${room.id}/join`, {
+    method: "POST",
+    token: guests[1].token,
+    body: { nickname: "참여자2", device: "mobile" },
+  });
+  await wait(60);
+
+  snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  assert.equal(
+    snap.systemMessages.filter((s) => s.kind === "join").length,
+    10,
+  );
+  const g2InfoBack = snap.onlineParticipants.find((u) => u.id === guests[1].id);
+  assert.equal(g2InfoBack?.status, "online");
+  assert.equal(snap.awayCount, 0);
+
+  // 6) Explicit 나가기 button (/leave) -> emits "퇴장하셨습니다." and reduces room member count to 9
+  g2Ws.close();
+  await once(g2Ws, "close");
+  const leaveRes = await app.request(`/rooms/${room.id}/leave`, {
+    method: "POST",
+    token: guests[1].token,
+  });
+  assert.equal(leaveRes.status, 200);
+
+  snap = await (
+    await app.request(`/rooms/${room.id}?audience=1`, {
+      token: guests[0].token,
+    })
+  ).json();
+  assert.equal(snap.onlineTotal, 9);
+  assert.equal(
+    snap.systemMessages.filter((s) => s.kind === "leave").length,
+    1,
+  );
+  assert.ok(
+    snap.systemMessages.some((s) =>
+      s.text.includes("참여자2 님이 퇴장하셨습니다."),
+    ),
+  );
+});

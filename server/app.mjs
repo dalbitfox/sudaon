@@ -108,6 +108,7 @@ export async function createApplication(options = {}) {
   const ownerDevices = new Map();
   const disconnectTimers = new Map();
   const autoCloseTimers = new Map();
+  const presenceBroadcastTimers = new Map();
   const disconnectGraceMs = options.disconnectGraceMs ?? 8000;
   const autoCloseGraceMs = options.autoCloseGraceMs ?? 10000;
 
@@ -127,6 +128,8 @@ export async function createApplication(options = {}) {
     const guestData = auth.guest(req, state.room.id);
     if (guestData || audience) {
       const p = auth.participant(req, state);
+      if (p.left)
+        throw new AppError(403, "퇴장한 채팅방입니다. 다시 입장해 주세요.");
       return {
         id: p.id,
         nickname: p.nickname,
@@ -150,50 +153,85 @@ export async function createApplication(options = {}) {
   };
 
   const buildOnlineSnapshot = async (roomId, stateOverride = null) => {
-    if (!store) return { online: 0, onlineTotal: 0, onlineParticipants: [] };
+    if (!store) {
+      return {
+        online: 0,
+        onlineTotal: 0,
+        activeOnlineCount: 0,
+        awayCount: 0,
+        onlineParticipants: [],
+        readCursors: {},
+      };
+    }
     const state = stateOverride || (await store.state(roomId));
-    const memberKeys = await store.members(roomId);
+    const [memberKeys, mstates] = await Promise.all([
+      store.members(roomId),
+      store.memberStates(roomId),
+    ]);
+    const memberKeySet = new Set(memberKeys.map(String));
     const group = hub.get(roomId);
     const wsOwnerOnline = group
-      ? [...group.clients].some((ws) => ws.owner && ws.readyState === 1)
+      ? [...group.clients].some(
+          (ws) => ws.owner && !ws.displayOnly && ws.readyState === 1,
+        )
       : false;
-    const ownerOnline =
-      wsOwnerOnline || memberKeys.some((k) => String(k).startsWith("owner:"));
-    const audienceIds = [
-      ...new Set([
-        ...memberKeys.filter((k) => !String(k).startsWith("owner:")),
-        ...(group
-          ? [...group.clients]
-              .filter((ws) => ws.participantId && ws.readyState === 1)
-              .map((ws) => ws.participantId)
-          : []),
-      ]),
-    ];
+    const wsParticipantIds = new Set(
+      group
+        ? [...group.clients]
+            .filter((ws) => ws.participantId && ws.readyState === 1)
+            .map((ws) => ws.participantId)
+        : [],
+    );
+    const ownerHasLease = memberKeys.some((k) =>
+      String(k).startsWith("owner:"),
+    );
     const onlineParticipants = [];
-    if (ownerOnline && state.room.status === "open") {
-      onlineParticipants.push({
-        id: "owner",
-        nickname: "관리자",
-        role: "owner",
-        device: ownerDevices.get(roomId) || "pc",
-      });
-    }
-    for (const pid of audienceIds) {
-      const p = state.participants[pid];
-      if (p && !p.kicked && !p.left) {
+    if (state.room.status === "open") {
+      if (wsOwnerOnline || ownerHasLease || mstates.owner) {
+        const ownerLive = wsOwnerOnline || ownerHasLease;
+        onlineParticipants.push({
+          id: "owner",
+          nickname: "관리자",
+          role: "owner",
+          device: ownerDevices.get(roomId) || "pc",
+          status:
+            ownerLive && mstates.owner?.status !== "away" ? "online" : "away",
+          readSeq: Number(mstates.owner?.readSeq) || 0,
+        });
+      }
+      const inRoomGuests = Object.values(state.participants || {})
+        .filter((p) => p && !p.kicked && !p.left)
+        .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+      for (const p of inRoomGuests) {
+        const hasLiveConn =
+          memberKeySet.has(p.id) || wsParticipantIds.has(p.id);
+        const effectiveStatus =
+          hasLiveConn && mstates[p.id]?.status !== "away" ? "online" : "away";
         onlineParticipants.push({
           id: p.id,
           nickname: p.nickname,
           role: "guest",
           device: p.device || "pc",
+          status: effectiveStatus,
+          readSeq: Number(mstates[p.id]?.readSeq) || 0,
         });
       }
     }
+    const readCursors = Object.fromEntries(
+      onlineParticipants.map((u) => [u.id, u.readSeq ?? 0]),
+    );
+    const activeOnlineCount = onlineParticipants.filter(
+      (u) => u.status === "online",
+    ).length;
+    const awayCount = onlineParticipants.length - activeOnlineCount;
     const online = await store.count(roomId);
     return {
       online,
       onlineTotal: onlineParticipants.length,
+      activeOnlineCount,
+      awayCount,
       onlineParticipants,
+      readCursors,
     };
   };
 
@@ -245,6 +283,16 @@ export async function createApplication(options = {}) {
     } catch {}
   };
 
+  const schedulePresenceBroadcast = (roomId, delayMs = 60) => {
+    if (presenceBroadcastTimers.has(roomId)) return;
+    const timer = setTimeout(async () => {
+      presenceBroadcastTimers.delete(roomId);
+      await broadcastMetadata(roomId);
+    }, delayMs);
+    timer.unref?.();
+    presenceBroadcastTimers.set(roomId, timer);
+  };
+
   const broadcastRoomSignal = (roomId, type, data) => {
     const group = hub.get(roomId);
     if (!group) return;
@@ -262,6 +310,9 @@ export async function createApplication(options = {}) {
         clearTimer(autoCloseTimers, roomId);
         return;
       }
+      const hasUnleftParticipants = Object.values(
+        state.participants || {},
+      ).some((p) => p && !p.left && !p.kicked);
       const members = await store.members(roomId);
       const group = hub.get(roomId);
       const activeSockets = group
@@ -269,7 +320,7 @@ export async function createApplication(options = {}) {
             (ws) => ws.readyState === 1 && !ws.displayOnly,
           ).length
         : 0;
-      if (members.length > 0 || activeSockets > 0) {
+      if (hasUnleftParticipants || members.length > 0 || activeSockets > 0) {
         clearTimer(autoCloseTimers, roomId);
         return;
       }
@@ -277,6 +328,10 @@ export async function createApplication(options = {}) {
       const timer = setTimeout(async () => {
         autoCloseTimers.delete(roomId);
         try {
+          const currentState = await store.state(roomId);
+          const stillUnleft = Object.values(
+            currentState.participants || {},
+          ).some((p) => p && !p.left && !p.kicked);
           const currentMembers = await store.members(roomId);
           const currentGroup = hub.get(roomId);
           const currentSockets = currentGroup
@@ -284,7 +339,8 @@ export async function createApplication(options = {}) {
                 (ws) => ws.readyState === 1 && !ws.displayOnly,
               ).length
             : 0;
-          if (currentMembers.length > 0 || currentSockets > 0) return;
+          if (stillUnleft || currentMembers.length > 0 || currentSockets > 0)
+            return;
           await store.write(roomId, (st) =>
             st.room.status === "closed"
               ? null
@@ -480,9 +536,10 @@ export async function createApplication(options = {}) {
     clearTimer(autoCloseTimers, roomId);
     occupiedRooms.add(roomId);
     if (existing && existing.tokenHash === hash(previous.nonce)) {
+      const wasLeft = Boolean(existing.left);
       clearTimer(disconnectTimers, `${roomId}:${existing.id}`);
       await store.presence(roomId, existing.id);
-      if (existing.left || existing.device !== device) {
+      if (wasLeft) {
         state = await store.write(roomId, (current) => {
           if (current.room.status !== "open")
             throw new AppError(410, "종료된 채팅방입니다.");
@@ -493,10 +550,21 @@ export async function createApplication(options = {}) {
         });
         await flushRoomEvents(roomId);
       }
+      await store.memberStateSet(roomId, existing.id, {
+        status: "online",
+        ...(wasLeft ? { readSeq: state.seq } : {}),
+      });
       await broadcastMetadata(roomId);
+      const presenceInfo = await buildOnlineSnapshot(roomId, state);
       return res.json({
         ...publicState(state, { viewerId: existing.id }),
         me: existing.id,
+        online: presenceInfo.online,
+        onlineTotal: presenceInfo.onlineTotal,
+        activeOnlineCount: presenceInfo.activeOnlineCount,
+        awayCount: presenceInfo.awayCount,
+        onlineParticipants: presenceInfo.onlineParticipants,
+        readCursors: presenceInfo.readCursors,
       });
     }
     const nickname = text(req.body?.nickname, 2, 20, "별명");
@@ -525,6 +593,10 @@ export async function createApplication(options = {}) {
       await store.presence(roomId, participantId, true);
       throw error;
     }
+    await store.memberStateSet(roomId, participantId, {
+      status: "online",
+      readSeq: state.seq,
+    });
     auth.set(res, `sudaon_guest_${roomId}`, {
       id: participantId,
       roomId,
@@ -532,9 +604,16 @@ export async function createApplication(options = {}) {
     });
     await flushRoomEvents(roomId);
     await broadcastMetadata(roomId);
+    const presenceInfo = await buildOnlineSnapshot(roomId, state);
     res.status(201).json({
       ...publicState(state, { viewerId: participantId }),
       me: participantId,
+      online: presenceInfo.online,
+      onlineTotal: presenceInfo.onlineTotal,
+      activeOnlineCount: presenceInfo.activeOnlineCount,
+      awayCount: presenceInfo.awayCount,
+      onlineParticipants: presenceInfo.onlineParticipants,
+      readCursors: presenceInfo.readCursors,
     });
   });
 
@@ -669,7 +748,10 @@ export async function createApplication(options = {}) {
       owner: isOwner,
       online: presenceInfo.online,
       onlineTotal: presenceInfo.onlineTotal,
+      activeOnlineCount: presenceInfo.activeOnlineCount,
+      awayCount: presenceInfo.awayCount,
       onlineParticipants: presenceInfo.onlineParticipants,
+      readCursors: presenceInfo.readCursors,
     });
   });
 
@@ -724,11 +806,44 @@ export async function createApplication(options = {}) {
     const savedMsg = updated.messages.find(
       (m) => m.requestId === requestId && m.participantId === actorInfo?.id,
     );
+    if (actorInfo && savedMsg?.seq) {
+      const leaseKey = actorInfo.id === "owner" ? "owner:main" : actorInfo.id;
+      await Promise.all([
+        store.presence(roomId, leaseKey).catch(() => {}),
+        store.memberStateSet(roomId, actorInfo.id, {
+          status: "online",
+          readSeq: savedMsg.seq,
+        }),
+      ]);
+      schedulePresenceBroadcast(roomId, 30);
+    }
     const aiPrompt = extractAiPrompt(body);
     if (aiPrompt && updated.aiEnabled !== false && savedMsg?.id === messageId) {
       triggerAiReply(roomId, aiPrompt, actorInfo, messageId);
     }
     res.status(201).json(savedMsg);
+  });
+
+  app.post("/api/rooms/:roomId/presence", async (req, res) => {
+    const { roomId } = req.params;
+    const state = await store.state(roomId);
+    if (state.room.status !== "open") return res.json({ ok: true });
+    const actor = resolveActor(req, state, req.query.audience === "1");
+    const rawStatus = req.body?.status;
+    const status =
+      rawStatus === "online" || rawStatus === "away" ? rawStatus : undefined;
+    const rawReadSeq = Number(req.body?.readSeq);
+    const readSeq =
+      Number.isFinite(rawReadSeq) && rawReadSeq >= 0
+        ? Math.min(Math.floor(rawReadSeq), state.seq)
+        : undefined;
+    await store.memberStateSet(roomId, actor.id, { status, readSeq });
+    if (status === "online" || readSeq !== undefined) {
+      const leaseKey = actor.id === "owner" ? "owner:main" : actor.id;
+      await store.presence(roomId, leaseKey).catch(() => {});
+    }
+    await broadcastMetadata(roomId);
+    res.json({ ok: true });
   });
 
   app.patch("/api/rooms/:roomId/messages/:messageId", async (req, res) => {
@@ -759,7 +874,10 @@ export async function createApplication(options = {}) {
     const guestCookie = auth.guest(req, roomId);
     if (!guestCookie && auth.owner(req)) {
       clearTimer(disconnectTimers, `${roomId}:owner:main`);
-      await store.presence(roomId, "owner:main", true);
+      await Promise.all([
+        store.presence(roomId, "owner:main", true),
+        store.memberStateDel(roomId, "owner"),
+      ]);
       const group = hub.get(roomId);
       if (group) {
         for (const ws of [...group.clients]) {
@@ -775,7 +893,10 @@ export async function createApplication(options = {}) {
     }
     const p = auth.participant(req, state);
     clearTimer(disconnectTimers, `${roomId}:${p.id}`);
-    await store.presence(roomId, p.id, true);
+    await Promise.all([
+      store.presence(roomId, p.id, true),
+      store.memberStateDel(roomId, p.id),
+    ]);
     if (state.room.status === "open" && !p.left) {
       await store.write(roomId, (st) =>
         st.room.status === "open" &&
@@ -825,7 +946,10 @@ export async function createApplication(options = {}) {
           throw new AppError(404, "참여자를 찾을 수 없습니다.");
         return { type: "kicked", data: { id: participantId } };
       });
-      await store.presence(roomId, participantId, true);
+      await Promise.all([
+        store.presence(roomId, participantId, true),
+        store.memberStateDel(roomId, participantId),
+      ]);
       await flushRoomEvents(roomId);
       await broadcastMetadata(roomId);
       await scheduleAutoCloseCheck(roomId);
@@ -1485,27 +1609,28 @@ export async function createApplication(options = {}) {
       );
       const participant = access(req, state, audience, dt);
 
+      if (participant?.left) throw new AppError(403, "");
+
       if (participant && state.room.status === "open") {
         clearTimer(disconnectTimers, `${roomId}:${participant.id}`);
         clearTimer(autoCloseTimers, roomId);
         occupiedRooms.add(roomId);
-        await store.presence(roomId, participant.id);
-        if (participant.left) {
-          state = await store.write(roomId, (cur) =>
-            cur.room.status === "open"
-              ? {
-                  type: "joined",
-                  data: { ...participant, device: clientDevice, left: false },
-                }
-              : null,
-          );
-        }
+        await Promise.all([
+          store.presence(roomId, participant.id),
+          store.memberStateSet(roomId, participant.id, { status: "online" }),
+        ]);
       } else if (isOwner && !displayOnly && state.room.status === "open") {
         clearTimer(disconnectTimers, `${roomId}:owner:main`);
         clearTimer(autoCloseTimers, roomId);
         occupiedRooms.add(roomId);
         ownerDevices.set(roomId, clientDevice);
-        await store.presence(roomId, "owner:main");
+        await Promise.all([
+          store.presence(roomId, "owner:main"),
+          store.memberStateSet(roomId, "owner", {
+            status: "online",
+            readSeq: state.seq,
+          }),
+        ]);
       }
 
       const presenceInfo = await buildOnlineSnapshot(roomId, state);
@@ -1533,11 +1658,48 @@ export async function createApplication(options = {}) {
               owner: ws.owner,
               online: presenceInfo.online,
               onlineTotal: presenceInfo.onlineTotal,
+              activeOnlineCount: presenceInfo.activeOnlineCount,
+              awayCount: presenceInfo.awayCount,
               onlineParticipants: presenceInfo.onlineParticipants,
+              readCursors: presenceInfo.readCursors,
             },
           }),
         );
         broadcastMetadata(roomId);
+
+        ws.on("message", async (raw) => {
+          if (ws.displayOnly || !store) return;
+          const memberId =
+            ws.participantId || (ws.owner && !ws.displayOnly ? "owner" : null);
+          if (!memberId) return;
+          try {
+            const msg = JSON.parse(String(raw));
+            if (msg?.type !== "presence") return;
+            const st = await store.state(roomId);
+            if (st.room.status !== "open") return;
+            if (ws.participantId) {
+              const p = st.participants[ws.participantId];
+              if (!p || p.left || p.kicked) return;
+            }
+            const status =
+              msg.status === "online" || msg.status === "away"
+                ? msg.status
+                : undefined;
+            const rawRead = Number(msg.readSeq);
+            const readSeq =
+              Number.isFinite(rawRead) && rawRead >= 0
+                ? Math.min(Math.floor(rawRead), st.seq)
+                : undefined;
+            if (!status && readSeq === undefined) return;
+            await store.memberStateSet(roomId, memberId, { status, readSeq });
+            if (status === "online" || readSeq !== undefined) {
+              const leaseKey =
+                memberId === "owner" ? "owner:main" : memberId;
+              store.presence(roomId, leaseKey).catch(() => {});
+            }
+            schedulePresenceBroadcast(roomId, 40);
+          } catch {}
+        });
 
         ws.on("pong", () => {
           ws.alive = true;
@@ -1575,17 +1737,23 @@ export async function createApplication(options = {}) {
             if (activeNow) return;
             try {
               await store.presence(roomId, memberKey, true);
-              if (!memberKey.startsWith("owner:")) {
-                await store.write(roomId, (st) => {
+              const st = await store.state(roomId);
+              if (st.room.status === "open") {
+                if (memberKey.startsWith("owner:")) {
+                  const mstates = await store.memberStates(roomId);
+                  if (mstates.owner) {
+                    await store.memberStateSet(roomId, "owner", {
+                      status: "away",
+                    });
+                  }
+                } else {
                   const p = st.participants[memberKey];
-                  if (st.room.status !== "open" || !p || p.left || p.kicked)
-                    return null;
-                  return {
-                    type: "left",
-                    data: { id: memberKey, nickname: p.nickname },
-                  };
-                });
-                await flushRoomEvents(roomId);
+                  if (p && !p.left && !p.kicked) {
+                    await store.memberStateSet(roomId, memberKey, {
+                      status: "away",
+                    });
+                  }
+                }
               }
               await broadcastMetadata(roomId);
               await scheduleAutoCloseCheck(roomId);
@@ -1706,8 +1874,10 @@ export async function createApplication(options = {}) {
     for (const timer of [poll, metadata, heartbeat]) clearInterval(timer);
     for (const timer of disconnectTimers.values()) clearTimeout(timer);
     for (const timer of autoCloseTimers.values()) clearTimeout(timer);
+    for (const timer of presenceBroadcastTimers.values()) clearTimeout(timer);
     disconnectTimers.clear();
     autoCloseTimers.clear();
+    presenceBroadcastTimers.clear();
     for (const ws of wss.clients) ws.terminate();
     wss.close();
     await new Promise((resolve) =>

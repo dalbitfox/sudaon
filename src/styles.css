@@ -2606,32 +2606,32 @@ body.display-body {
   flex-wrap: wrap;
   gap: 6px;
 }
-.message.theirs .message-content > p {
+.message.theirs .message-content p {
   border-radius: 2px 14px 14px 14px;
   background: var(--chat-bubble-other, #f1f5ec);
   color: var(--chat-bubble-other-ink, #23392d);
   box-shadow: 0 1px 2px rgba(20, 45, 34, 0.05);
 }
-.message.mine .message-content > p {
+.message.mine .message-content p {
   border-radius: 14px 2px 14px 14px;
   background: #1a5945;
   color: #ffffff;
   box-shadow: 0 2px 6px rgba(22, 62, 53, 0.14);
 }
-.in-room .message.mine .message-content > p {
+.in-room .message.mine .message-content p {
   background: #1a5945;
   color: #ffffff;
 }
-.in-room .message.theirs .message-content > p {
+.in-room .message.theirs .message-content p {
   background: var(--chat-bubble-other, #eef3e7);
   color: var(--chat-bubble-other-ink, #23392d);
 }
-.message.mine .message-content > p.deleted,
-.message.theirs .message-content > p.deleted {
+.message.mine .message-content p.deleted,
+.message.theirs .message-content p.deleted {
   background: rgba(140, 152, 142, 0.16);
   color: #8b968c;
 }
-.message.ai-msg .message-content > p {
+.message.ai-msg .message-content p {
   background: linear-gradient(135deg, #eef6ff 0%, #f1f8f3 100%);
   border: 1px solid #cde0f5;
   color: #1c3548;
@@ -4501,4 +4501,162 @@ body.display-body {
   .participant-toggle-btn {
     padding: 8px 14px;
   }
+}
+
+/* =========================================================
+ * KakaoTalk-Style Unread Count & Online / Away Status Badges
+ * ========================================================= */
+.chat-title-with-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-header-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(22, 62, 53, 0.1);
+  color: var(--chat-fg, #1f4c3c);
+  line-height: 1.4;
+}
+.dark-surface .chat-header-count {
+  background: rgba(255, 255, 255, 0.16);
+  color: #e6f4ea;
+}
+
+.message-bubble-row {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 100%;
+}
+.message-bubble-row > p {
+  min-width: 0;
+  margin: 0;
+}
+.msg-unread-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: #c28200;
+  padding: 0 1px 3px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.dark-surface .msg-unread-count,
+.display-chat .msg-unread-count {
+  color: #fbbf24;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.presence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.presence-badge.compact {
+  padding: 0;
+  background: transparent !important;
+  border: 0 !important;
+}
+.presence-badge.online {
+  background: rgba(16, 185, 129, 0.13);
+  color: #0f766e;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+.presence-badge.online .presence-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+  display: inline-block;
+}
+.presence-badge.away {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.34);
+}
+.presence-badge.away.compact {
+  color: #d97706;
+}
+.dark-surface .presence-badge.online,
+.display-chat .presence-badge.online {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.35);
+}
+.dark-surface .presence-badge.away,
+.display-chat .presence-badge.away {
+  background: rgba(245, 158, 11, 0.24);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.participant-status-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.participant-status-counts .cnt-online,
+.participant-status-counts .cnt-away {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.participant-status-counts .cnt-online {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f766e;
+}
+.participant-status-counts .cnt-online i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+}
+.participant-status-counts .cnt-away {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+.dark-surface .participant-status-counts .cnt-online {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+}
+.dark-surface .participant-status-counts .cnt-away {
+  background: rgba(245, 158, 11, 0.24);
+  color: #fcd34d;
+}
+.mini-chip.is-away {
+  background: rgba(254, 243, 199, 0.85);
+  color: #92400e;
+}
+.participant-item.is-away {
+  background: rgba(254, 252, 232, 0.9);
+  border-color: #fde68a;
+}
+.participant-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1;
 }

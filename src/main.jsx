@@ -46,6 +46,7 @@ import {
   Pencil,
   Maximize2,
   PictureInPicture2,
+  Moon,
 } from "lucide-react";
 import QRCode from "qrcode";
 import {
@@ -267,13 +268,43 @@ function Modal({ title, children, onClose, wide = false }) {
   );
 }
 
+function PresenceBadge({ status = "online", compact = false }) {
+  const isAway = status === "away";
+  if (isAway) {
+    return (
+      <span
+        className={`presence-badge away ${compact ? "compact" : ""}`}
+        title="자리비움 (화면 꺼짐 또는 비활성 상태)"
+        aria-label="자리비움"
+      >
+        <Moon size={compact ? 9 : 10} strokeWidth={2.5} />
+        {!compact && <span>자리비움</span>}
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`presence-badge online ${compact ? "compact" : ""}`}
+      title="온라인"
+      aria-label="온라인"
+    >
+      <i className="presence-dot" />
+      {!compact && <span>온라인</span>}
+    </span>
+  );
+}
+
 /* =========================================================
- * 실시간 온라인 참여자 바 & 접이식 목록 (PC/Mobile/Tablet 아이콘 + 관리자 배지)
+ * 실시간 온라인 참여자 바 & 접이식 목록 (온라인/자리비움 아이콘 + PC/Mobile/Tablet + 관리자 배지)
  * ========================================================= */
 function ParticipantBar({ meta, me }) {
   const [open, setOpen] = useState(false);
   const list = meta?.onlineParticipants || [];
   const totalCount = meta?.onlineTotal ?? list.length ?? meta?.online ?? 0;
+  const onlineCount =
+    meta?.activeOnlineCount ?? list.filter((p) => p.status !== "away").length;
+  const awayCount =
+    meta?.awayCount ?? list.filter((p) => p.status === "away").length;
 
   return (
     <div className="participant-bar-wrap">
@@ -285,17 +316,31 @@ function ParticipantBar({ meta, me }) {
       >
         <span className="participant-summary">
           <Users size={14} />
-          <b>접속 중 {totalCount}명</b>
+          <b>참여 {totalCount}명</b>
+          <span className="participant-status-counts">
+            <span className="cnt-online">
+              <i /> 온라인 {onlineCount}
+            </span>
+            {awayCount > 0 && (
+              <span className="cnt-away">
+                <Moon size={10} strokeWidth={2.4} /> 자리비움 {awayCount}
+              </span>
+            )}
+          </span>
           <span className="participant-preview-avatars">
             {list.slice(0, 4).map((p) => {
               const badge = deviceBadge(p.device);
+              const pStatus = p.status || "online";
               return (
                 <span
                   key={p.id}
-                  className="mini-chip"
-                  title={`${p.nickname} (${badge.label})`}
+                  className={`mini-chip ${pStatus === "away" ? "is-away" : ""}`}
+                  title={`${p.nickname} · ${pStatus === "away" ? "자리비움" : "온라인"} (${badge.label})`}
                 >
-                  {badge.icon} {p.nickname}
+                  <PresenceBadge status={pStatus} compact />
+                  <span>
+                    {badge.icon} {p.nickname}
+                  </span>
                 </span>
               );
             })}
@@ -308,7 +353,11 @@ function ParticipantBar({ meta, me }) {
       </button>
 
       {open && (
-        <div className="participant-drawer" role="region" aria-label="현재 접속자 목록">
+        <div
+          className="participant-drawer"
+          role="region"
+          aria-label="현재 접속자 목록"
+        >
           {!list.length ? (
             <p className="muted">현재 표시할 접속자 정보가 없습니다.</p>
           ) : (
@@ -316,8 +365,12 @@ function ParticipantBar({ meta, me }) {
               {list.map((p) => {
                 const badge = deviceBadge(p.device);
                 const isMe = Boolean(me && p.id === me);
+                const pStatus = p.status || "online";
                 return (
-                  <li key={p.id} className="participant-item">
+                  <li
+                    key={p.id}
+                    className={`participant-item ${pStatus === "away" ? "is-away" : ""}`}
+                  >
                     <span
                       className={`avatar sm ${
                         p.role === "owner"
@@ -329,6 +382,7 @@ function ParticipantBar({ meta, me }) {
                     </span>
                     <span className="participant-name">
                       <b>{p.nickname}</b>
+                      <PresenceBadge status={pStatus} />
                       {p.role === "owner" && (
                         <i className="role-badge owner">관리자</i>
                       )}
@@ -356,19 +410,34 @@ function ParticipantBar({ meta, me }) {
 }
 
 /* =========================================================
- * 실시간 채팅 피드 (좌/우 말풍선 분리 · 기기 배지 · 시스템 메시지 · 본인 메시지 수정 · AI 답변 표시)
+ * 실시간 채팅 피드 (카카오톡 읽음 숫자 · 온라인/자리비움 배지 · 좌/우 말풍선 · 본인 수정 · AI 답변)
  * ========================================================= */
 function MessageFeed({
   room,
+  meta,
   aiStatus,
   manage = false,
   audience = false,
   display = false,
   onError,
   earlier,
+  onRead,
 }) {
   const messages = room?.messages || [];
   const systemMessages = room?.systemMessages || [];
+  const activeMembers = meta?.onlineParticipants || [];
+  const readCursors = meta?.readCursors || {};
+  const memberStatusMap = useMemo(
+    () => new Map(activeMembers.map((u) => [u.id, u.status || "online"])),
+    [activeMembers],
+  );
+  const latestMessageSeq = useMemo(
+    () =>
+      messages.length
+        ? messages.reduce((max, m) => Math.max(max, m.seq || 0), 0)
+        : 0,
+    [messages],
+  );
   const timeline = useMemo(() => {
     const msgItems = messages.map((m) => ({
       itemType: "message",
@@ -402,10 +471,29 @@ function MessageFeed({
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const roomOpen = room?.room?.status === "open";
+
   useEffect(() => {
     setHasEarlier(true);
     setEditingId(null);
   }, [room?.room?.id]);
+
+  useEffect(() => {
+    if (display || !roomOpen || !latestMessageSeq || scroll.unread > 0) return;
+    if (
+      typeof document === "undefined" ||
+      document.visibilityState !== "hidden"
+    ) {
+      onRead?.(latestMessageSeq);
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && scroll.unread === 0) {
+        onRead?.(latestMessageSeq);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [display, roomOpen, latestMessageSeq, scroll.unread, onRead]);
 
   const moderate = async (path, method) => {
     try {
@@ -453,8 +541,6 @@ function MessageFeed({
       setSavingEdit(false);
     }
   };
-
-  const roomOpen = room?.room?.status === "open";
 
   return (
     <div className={`feed-wrapper ${display ? "display-feed" : ""}`}>
@@ -512,6 +598,17 @@ function MessageFeed({
             m.participantId === room.me;
           const dev = !isAi ? deviceBadge(m.device) : null;
           const isEditing = editingId === m.id;
+          const senderStatus = !isAi
+            ? memberStatusMap.get(m.participantId)
+            : null;
+          const unreadCount =
+            roomOpen && !m.deleted && m.seq && activeMembers.length > 0
+              ? activeMembers.reduce((acc, u) => {
+                  if (u.id === m.participantId) return acc;
+                  const cursor = readCursors[u.id] ?? u.readSeq ?? 0;
+                  return cursor < m.seq ? acc + 1 : acc;
+                }, 0)
+              : 0;
 
           return (
             <div
@@ -566,11 +663,17 @@ function MessageFeed({
                       {isOwnerMsg && (
                         <i className="role-badge owner">관리자</i>
                       )}
+                      {senderStatus && (
+                        <PresenceBadge status={senderStatus} compact={display} />
+                      )}
                       <b>{m.nickname} · 나</b>
                     </>
                   ) : (
                     <>
                       <b>{m.nickname}</b>
+                      {senderStatus && (
+                        <PresenceBadge status={senderStatus} compact={display} />
+                      )}
                       {isAi && <i className="role-badge ai">AI</i>}
                       {isOwnerMsg && (
                         <i className="role-badge owner">관리자</i>
@@ -630,9 +733,29 @@ function MessageFeed({
                     </div>
                   </div>
                 ) : (
-                  <p className={m.deleted ? "deleted" : ""}>
-                    {m.deleted ? "삭제된 메시지입니다." : m.text}
-                  </p>
+                  <div className="message-bubble-row">
+                    {isMine && unreadCount > 0 && (
+                      <span
+                        className="msg-unread-count"
+                        title={`아직 읽지 않은 참여자 ${unreadCount}명`}
+                        aria-label={`안 읽음 ${unreadCount}명`}
+                      >
+                        {unreadCount}
+                      </span>
+                    )}
+                    <p className={m.deleted ? "deleted" : ""}>
+                      {m.deleted ? "삭제된 메시지입니다." : m.text}
+                    </p>
+                    {!isMine && unreadCount > 0 && (
+                      <span
+                        className="msg-unread-count"
+                        title={`아직 읽지 않은 참여자 ${unreadCount}명`}
+                        aria-label={`안 읽음 ${unreadCount}명`}
+                      >
+                        {unreadCount}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1640,11 +1763,12 @@ function Dashboard({ health, owner, setOwner }) {
                   <div>
                     <span>현재 참여 중</span>
                     <strong>
-                      {room.meta.online}
+                      {room.meta.onlineTotal ?? room.meta.online}
                       <small>명</small>
                     </strong>
                     <p>
-                      청중 최대 200명 · 총 접속 {room.meta.onlineTotal ?? room.meta.online}명
+                      온라인 {room.meta.activeOnlineCount ?? room.meta.online}명 · 자리비움{" "}
+                      {room.meta.awayCount ?? 0}명 (최대 200명)
                     </p>
                   </div>
                   <span className="stat-live">
@@ -1731,7 +1855,18 @@ function Dashboard({ health, owner, setOwner }) {
                         <div className="section-heading">
                           <div>
                             <span className="eyebrow">LIVE CONVERSATION</span>
-                            <h2>{active?.title || "실시간 채팅"}</h2>
+                            <h2 className="chat-title-with-count">
+                              <span>{active?.title || "실시간 채팅"}</span>
+                              {active && (
+                                <span
+                                  className="chat-header-count"
+                                  title="채팅방 참여 인원"
+                                >
+                                  <Users size={13} />{" "}
+                                  {room.meta.onlineTotal ?? room.meta.online ?? 0}
+                                </span>
+                              )}
+                            </h2>
                           </div>
                           <div className="heading-actions">
                             {active && (
@@ -1786,10 +1921,12 @@ function Dashboard({ health, owner, setOwner }) {
                             />
                             <MessageFeed
                               room={room.data}
+                              meta={room.meta}
                               aiStatus={room.aiStatus}
                               manage
                               onError={setError}
                               earlier={room.earlier}
+                              onRead={room.reportRead}
                             />
                             {active.status === "open" && (
                               <ChatComposer
@@ -2232,7 +2369,13 @@ function Guest({ roomId, health }) {
             <div className="guest-room-heading">
               <div>
                 <span className="eyebrow">함께 나누는 이야기</span>
-                <h1>{room.data?.room.title || info?.title}</h1>
+                <h1 className="chat-title-with-count">
+                  <span>{room.data?.room.title || info?.title}</span>
+                  <span className="chat-header-count" title="채팅방 참여 인원">
+                    <Users size={13} />{" "}
+                    {room.meta.onlineTotal ?? room.meta.online ?? 0}
+                  </span>
+                </h1>
                 <div className="guest-room-meta">
                   <Status connection={room.connection} />
                 </div>
@@ -2265,10 +2408,12 @@ function Guest({ roomId, health }) {
 
             <MessageFeed
               room={room.data}
+              meta={room.meta}
               aiStatus={room.aiStatus}
               audience
               onError={setError}
               earlier={room.earlier}
+              onRead={room.reportRead}
             />
             <Notice>{error || room.error}</Notice>
             {closed || denied ? (
@@ -2519,6 +2664,7 @@ function Display({ roomId }) {
         <div className="display-chat">
           <MessageFeed
             room={room.data}
+            meta={room.meta}
             aiStatus={room.aiStatus}
             display
             onError={setError}

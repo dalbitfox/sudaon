@@ -26,6 +26,28 @@ const THROTTLE = `
 local total = redis.call('INCR', KEYS[1])
 if total == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
 return total`;
+const MEMBER_STATE = `
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+local status = ARGV[2]
+local hasRead = ARGV[3] == '1'
+local readSeq = tonumber(ARGV[4]) or 0
+local updatedAt = tonumber(ARGV[5]) or 0
+if cur then
+  local ok, parsed = pcall(cjson.decode, cur)
+  if ok and type(parsed) == 'table' then
+    if status == '' then status = parsed.status or 'online' end
+    if hasRead then
+      if (parsed.readSeq or 0) > readSeq then readSeq = parsed.readSeq end
+    else
+      readSeq = parsed.readSeq or 0
+    end
+  end
+end
+if status == '' then status = 'online' end
+local nextVal = cjson.encode({ status = status, readSeq = readSeq, updatedAt = updatedAt })
+redis.call('HSET', KEYS[1], ARGV[1], nextVal)
+redis.call('EXPIRE', KEYS[1], 86400)
+return nextVal`;
 
 // Only the server owns the event log. Append's expected sequence makes validation
 // and writes safe when concurrent requests land on different Vercel instances.
@@ -149,6 +171,18 @@ export class EventStore {
   async kvDel(key) {
     if (this.driver.kvDel) return this.driver.kvDel(key);
   }
+  async memberStateSet(roomId, memberId, patch = {}) {
+    if (this.driver.memberStateSet)
+      return this.driver.memberStateSet(roomId, memberId, patch);
+  }
+  async memberStates(roomId) {
+    if (this.driver.memberStates) return this.driver.memberStates(roomId);
+    return {};
+  }
+  async memberStateDel(roomId, memberId) {
+    if (this.driver.memberStateDel)
+      return this.driver.memberStateDel(roomId, memberId);
+  }
   async close() {
     this.driver.close?.();
   }
@@ -165,7 +199,8 @@ export async function localStore(filename) {
   if (file !== ":memory:") chmodSync(file, 0o600);
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS events (room TEXT NOT NULL, seq INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(room, seq));
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS member_states (room TEXT NOT NULL, member TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(room, member));`);
   db.prepare("INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)").run(
     "session-secret",
     randomBytes(32).toString("hex"),
@@ -265,6 +300,50 @@ export async function localStore(filename) {
     kvDel: async (key) => {
       ephemeral.delete(key);
     },
+    memberStateSet: async (roomId, memberId, patch = {}) => {
+      const prevRow = db
+        .prepare("SELECT body FROM member_states WHERE room = ? AND member = ?")
+        .get(roomId, memberId);
+      let prev = { status: "online", readSeq: 0, updatedAt: 0 };
+      if (prevRow?.body) {
+        try {
+          prev = JSON.parse(prevRow.body);
+        } catch {}
+      }
+      const next = {
+        status:
+          patch.status === "away" || patch.status === "online"
+            ? patch.status
+            : prev.status || "online",
+        readSeq:
+          patch.readSeq !== undefined
+            ? Math.max(prev.readSeq || 0, Number(patch.readSeq) || 0)
+            : prev.readSeq || 0,
+        updatedAt: Date.now(),
+      };
+      db.prepare(
+        "INSERT OR REPLACE INTO member_states (room, member, body) VALUES (?, ?, ?)",
+      ).run(roomId, memberId, JSON.stringify(next));
+      return next;
+    },
+    memberStates: async (roomId) => {
+      const rows = db
+        .prepare("SELECT member, body FROM member_states WHERE room = ?")
+        .all(roomId);
+      const out = {};
+      for (const r of rows) {
+        try {
+          out[r.member] = JSON.parse(r.body);
+        } catch {}
+      }
+      return out;
+    },
+    memberStateDel: async (roomId, memberId) => {
+      db.prepare("DELETE FROM member_states WHERE room = ? AND member = ?").run(
+        roomId,
+        memberId,
+      );
+    },
     close: () => db.close(),
   });
 }
@@ -296,6 +375,7 @@ export function redisStore({ url, token, prefix = "sudaon:v1" }) {
   };
   const eventsKey = (roomId) => `${prefix}:room:${roomId}:events`;
   const leasesKey = (roomId) => `${prefix}:room:${roomId}:presence`;
+  const mstateKey = (roomId) => `${prefix}:room:${roomId}:mstate`;
   return new EventStore({
     limit: (key, seconds) =>
       command("EVAL", THROTTLE, 1, `${prefix}:limit:${key}`, seconds),
@@ -377,6 +457,52 @@ export function redisStore({ url, token, prefix = "sudaon:v1" }) {
     },
     kvDel: async (key) => {
       await command("DEL", `${prefix}:ephemeral:${key}`);
+    },
+    memberStateSet: async (roomId, memberId, patch = {}) => {
+      const statusArg =
+        patch.status === "away" || patch.status === "online"
+          ? patch.status
+          : "";
+      const hasRead = patch.readSeq !== undefined ? "1" : "0";
+      const readSeq =
+        patch.readSeq !== undefined ? Math.max(0, Number(patch.readSeq) || 0) : 0;
+      const raw = await command(
+        "EVAL",
+        MEMBER_STATE,
+        1,
+        mstateKey(roomId),
+        memberId,
+        statusArg,
+        hasRead,
+        readSeq,
+        Date.now(),
+      );
+      try {
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    },
+    memberStates: async (roomId) => {
+      const raw = await command("HGETALL", mstateKey(roomId));
+      const out = {};
+      if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i += 2) {
+          try {
+            out[raw[i]] = JSON.parse(raw[i + 1]);
+          } catch {}
+        }
+      } else if (raw && typeof raw === "object") {
+        for (const [k, v] of Object.entries(raw)) {
+          try {
+            out[k] = typeof v === "string" ? JSON.parse(v) : v;
+          } catch {}
+        }
+      }
+      return out;
+    },
+    memberStateDel: async (roomId, memberId) => {
+      await command("HDEL", mstateKey(roomId), memberId);
     },
   });
 }
