@@ -47,6 +47,7 @@ import {
   Maximize2,
   PictureInPicture2,
   Moon,
+  Trophy,
 } from "lucide-react";
 import QRCode from "qrcode";
 import {
@@ -1106,14 +1107,25 @@ function ChatComposer({
 }
 
 /* =========================================================
- * 실시간 키워드 & 생동감 있는 플로팅 워드클라우드 패널
+ * 실시간 키워드 · 워드클라우드 · 인기 순위 · 채팅방 활성화 순위 패널
  * ========================================================= */
 function KeywordPanel({ meta, compact = false, roomId, onError }) {
   const [mode, setMode] = useState("cloud"),
     [scope, setScope] = useState("recent"),
+    [activityScope, setActivityScope] = useState("all"),
     [editing, setEditing] = useState(false),
     [excluded, setExcluded] = useState("");
+  const isActivity = mode === "activity";
+  const currentScope = isActivity ? activityScope : scope;
   const words = (scope === "all" ? meta.all : meta.recent) || [];
+  const activityList =
+    (activityScope === "all" ? meta.activityAll : meta.activityRecent) || [];
+  const activeSpeakers = activityList.filter((u) => u.count > 0).length;
+  const totalActivityMsgs = activityList.reduce((sum, u) => sum + u.count, 0);
+  const activationRate = activityList.length
+    ? Math.round((activeSpeakers / activityList.length) * 100)
+    : 0;
+
   const save = async (e) => {
     e.preventDefault();
     try {
@@ -1130,12 +1142,22 @@ function KeywordPanel({ meta, compact = false, roomId, onError }) {
     <section className={`keyword-panel ${compact ? "compact" : ""}`}>
       <div className="section-heading">
         <div>
-          <span className="eyebrow">AUDIENCE INSIGHTS</span>
+          <span className="eyebrow">
+            {isActivity ? "CHAT ACTIVITY RANKING" : "AUDIENCE INSIGHTS"}
+          </span>
           <h2>
-            <Sparkles size={18} /> 지금, 많이 나온 이야기
+            {isActivity ? (
+              <>
+                <Trophy size={18} /> 채팅방 활성화 순위
+              </>
+            ) : (
+              <>
+                <Sparkles size={18} /> 지금, 많이 나온 이야기
+              </>
+            )}
           </h2>
         </div>
-        {roomId && (
+        {roomId && !isActivity && (
           <button
             className="icon-button"
             aria-label="키워드 제외 단어 설정"
@@ -1164,16 +1186,139 @@ function KeywordPanel({ meta, compact = false, roomId, onError }) {
           >
             인기 순위
           </button>
+          <button
+            className={mode === "activity" ? "selected" : ""}
+            aria-pressed={mode === "activity"}
+            onClick={() => setMode("activity")}
+          >
+            활성화 순위
+          </button>
         </div>
         <label className="scope-select">
           <span className="sr-only">집계 범위</span>
-          <select value={scope} onChange={(e) => setScope(e.target.value)}>
+          <select
+            value={currentScope}
+            onChange={(e) =>
+              isActivity
+                ? setActivityScope(e.target.value)
+                : setScope(e.target.value)
+            }
+          >
             <option value="recent">최근 5분</option>
             <option value="all">방 전체</option>
           </select>
         </label>
       </div>
-      {!words.length ? (
+      {isActivity ? (
+        !activityList.length ? (
+          <div className="keyword-empty">
+            <Trophy size={25} />
+            <p>
+              참여자가 입장하면 채팅을 가장 많이 한 분부터
+              <br />
+              가장 적게 한 분까지 전체 순위가 표시됩니다.
+            </p>
+          </div>
+        ) : (
+          <div className="activity-ranking-wrap">
+            <div className="activity-summary-strip">
+              <span>
+                전체 <b>{activityList.length}명</b>
+              </span>
+              <i>·</i>
+              <span>
+                대화 참여 <b>{activeSpeakers}명</b>
+              </span>
+              <i>·</i>
+              <span className="rate-pill">활성화 {activationRate}%</span>
+              <i>·</i>
+              <span>
+                총 <b>{totalActivityMsgs}회</b>
+              </span>
+            </div>
+            <div
+              className="activity-ranking-list"
+              role="list"
+              aria-label="채팅방 활성화 순위 목록"
+            >
+              {activityList.map((u) => {
+                const badge = deviceBadge(u.device);
+                const isMedal = u.count > 0 && u.rank <= 3;
+                const medalEmoji =
+                  u.rank === 1
+                    ? "🥇"
+                    : u.rank === 2
+                      ? "🥈"
+                      : u.rank === 3
+                        ? "🥉"
+                        : "";
+                return (
+                  <div
+                    className={`activity-rank-row ${
+                      u.count === 0 ? "zero-chat" : ""
+                    } ${isMedal ? `top-${u.rank}` : ""}`}
+                    key={u.id}
+                    role="listitem"
+                  >
+                    <span
+                      className={`activity-rank-num ${
+                        isMedal ? `medal-${u.rank}` : ""
+                      }`}
+                    >
+                      {isMedal
+                        ? `${medalEmoji} ${u.rank}위`
+                        : `${String(u.rank).padStart(2, "0")}위`}
+                    </span>
+                    <span
+                      className={`avatar sm ${
+                        u.role === "owner"
+                          ? "avatar-owner"
+                          : `tone-${(u.nickname?.codePointAt(0) || 0) % 5}`
+                      }`}
+                    >
+                      {u.nickname?.slice(0, 1)}
+                    </span>
+                    <div className="activity-bar-col">
+                      <div className="activity-user-line">
+                        <b>{u.nickname}</b>
+                        {u.status && (
+                          <PresenceBadge status={u.status} compact />
+                        )}
+                        {u.role === "owner" && (
+                          <i className="role-badge owner">관리자</i>
+                        )}
+                        {u.left && (
+                          <span className="activity-left-tag">퇴장</span>
+                        )}
+                        <span className="msg-device" title={badge.label}>
+                          {badge.icon}
+                        </span>
+                      </div>
+                      <div className="activity-progress-track">
+                        <i
+                          className={isMedal ? `fill-${u.rank}` : ""}
+                          style={{
+                            width: `${
+                              u.count > 0 ? Math.max(6, u.ratio) : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="activity-count-col">
+                      <strong>
+                        {u.count}
+                        <small>회</small>
+                      </strong>
+                      <span className="activity-share">{u.percentage}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )
+      ) : !words.length ? (
         <div className="keyword-empty">
           <Sparkles size={25} />
           <p>
@@ -1202,7 +1347,10 @@ function KeywordPanel({ meta, compact = false, roomId, onError }) {
         <WordCloudView words={words} compact={compact} />
       )}
       <p className="keyword-footnote">
-        <Clock3 size={13} /> 3초마다 갱신 · 같은 메시지의 반복 단어는 1회
+        <Clock3 size={13} />{" "}
+        {isActivity
+          ? "실시간 반영 · 최다 발화자부터 최소 발화자(0회 포함)까지 전체 순위"
+          : "3초마다 갱신 · 같은 메시지의 반복 단어는 1회"}
       </p>
       {editing && (
         <Modal title="집계에서 제외할 단어" onClose={() => setEditing(false)}>

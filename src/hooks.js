@@ -257,6 +257,8 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
   const [meta, setMeta] = useState({
     recent: [],
     all: [],
+    activityRecent: [],
+    activityAll: [],
     online: 0,
     onlineTotal: 0,
     activeOnlineCount: 0,
@@ -484,6 +486,8 @@ export function useRoom(roomId, enabled, audience = false, display = false) {
     setMeta({
       recent: [],
       all: [],
+      activityRecent: [],
+      activityAll: [],
       online: 0,
       onlineTotal: 0,
       activeOnlineCount: 0,

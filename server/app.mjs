@@ -14,6 +14,7 @@ import {
   drawLots,
   generateLadder,
   keywords,
+  activityRanking,
   publicState,
   publicEvent,
 } from "./model.mjs";
@@ -268,9 +269,22 @@ export async function createApplication(options = {}) {
     try {
       const state = await store.state(roomId);
       const presenceInfo = await buildOnlineSnapshot(roomId, state);
+      const now = Date.now();
       const keywordData = {
-        recent: keywords(state),
-        all: keywords(state, "all"),
+        recent: keywords(state, "recent", now),
+        all: keywords(state, "all", now),
+        activityRecent: activityRanking(
+          state,
+          "recent",
+          now,
+          presenceInfo.onlineParticipants,
+        ),
+        activityAll: activityRanking(
+          state,
+          "all",
+          now,
+          presenceInfo.onlineParticipants,
+        ),
         exclusions: state.exclusions,
       };
       const payload = JSON.stringify({
@@ -1490,9 +1504,23 @@ export async function createApplication(options = {}) {
       throw new AppError(401, "발표자 로그인이 필요합니다.");
     }
     const state = await store.state(req.params.roomId);
+    const presenceInfo = await buildOnlineSnapshot(req.params.roomId, state);
+    const now = Date.now();
     res.json({
-      recent: keywords(state),
-      all: keywords(state, "all"),
+      recent: keywords(state, "recent", now),
+      all: keywords(state, "all", now),
+      activityRecent: activityRanking(
+        state,
+        "recent",
+        now,
+        presenceInfo.onlineParticipants,
+      ),
+      activityAll: activityRanking(
+        state,
+        "all",
+        now,
+        presenceInfo.onlineParticipants,
+      ),
       exclusions: state.exclusions,
       ruleVersion: "ko-suffix-v1",
     });

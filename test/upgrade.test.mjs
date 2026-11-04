@@ -1077,3 +1077,94 @@ test("Upgrade 7: KakaoTalk unread count (10 -> 9 -> 6 -> 0), Online/Away presenc
     ),
   );
 });
+
+test("Upgrade 8: Chat room activity ranking from most active (#1) down to least active (0 messages)", async (t) => {
+  const app = await setup({
+    messageInterval: 0,
+    aiAdapter: async () => ({
+      provider: "mock-ai",
+      model: "test-model",
+      text: "AI 자동 응답입니다.",
+    }),
+  });
+  t.after(() => app.close());
+
+  const room = (
+    await (
+      await app.request("/rooms", {
+        method: "POST",
+        token: app.owner,
+        body: { title: "채팅방 활성화 순위 검증" },
+      })
+    ).json()
+  ).room;
+
+  const joinGuest = async (nickname, device = "mobile") => {
+    const res = await app.request(`/rooms/${room.id}/join`, {
+      method: "POST",
+      body: { nickname, device },
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    return { id: body.me, nickname, token: cookie(res) };
+  };
+
+  const gTop = await joinGuest("다변가", "pc");
+  const gMid = await joinGuest("중간러", "mobile");
+  const gLow = await joinGuest("한마디", "mobile");
+  const gZero = await joinGuest("경청러", "tablet");
+
+  const sendMsg = async (guest, text, idx) => {
+    const res = await app.request(`/rooms/${room.id}/messages?audience=1`, {
+      method: "POST",
+      token: guest.token,
+      body: { text, requestId: `act-${guest.id}-${idx}` },
+    });
+    assert.equal(res.status, 201);
+    return res.json();
+  };
+
+  // gTop sends 3 valid messages + 1 message that gets deleted (should count as 3)
+  await sendMsg(gTop, "첫 번째 의견입니다!", 1);
+  await sendMsg(gTop, "두 번째 의견입니다!", 2);
+  await sendMsg(gTop, "@AI 요약 부탁해", 3);
+  const toDelete = await sendMsg(gTop, "삭제될 메시지", 4);
+  await app.request(`/rooms/${room.id}/messages/${toDelete.id}`, {
+    method: "DELETE",
+    token: app.owner,
+  });
+
+  // gMid sends 2 messages
+  await sendMsg(gMid, "공감합니다!", 1);
+  await sendMsg(gMid, "추가 질문 있습니다.", 2);
+
+  // gLow sends 1 message; gZero sends 0 messages
+  await sendMsg(gLow, "안녕하세요!", 1);
+
+  await wait(80);
+
+  const kwRes = await app.request(`/rooms/${room.id}/keywords`, {
+    token: app.owner,
+  });
+  assert.equal(kwRes.status, 200);
+  const kw = await kwRes.json();
+
+  assert.equal(kw.activityAll.length, 4);
+  assert.deepEqual(
+    kw.activityAll.map((u) => ({
+      nickname: u.nickname,
+      rank: u.rank,
+      count: u.count,
+      ratio: u.ratio,
+    })),
+    [
+      { nickname: "다변가", rank: 1, count: 3, ratio: 100 },
+      { nickname: "중간러", rank: 2, count: 2, ratio: 67 },
+      { nickname: "한마디", rank: 3, count: 1, ratio: 33 },
+      { nickname: "경청러", rank: 4, count: 0, ratio: 0 },
+    ],
+  );
+  // AI bot must never appear in human chat activity ranking
+  assert.ok(!kw.activityAll.some((u) => u.id === "ai" || u.role === "ai"));
+  assert.equal(kw.activityAll[3].id, gZero.id);
+});

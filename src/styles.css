@@ -4660,3 +4660,180 @@ body.display-body {
   min-width: 0;
   flex: 1;
 }
+
+/* =========================================================
+ * Chat Room Activity Ranking (최다 발화 1위 ~ 최소 발화 전체 순위)
+ * ========================================================= */
+.activity-ranking-wrap {
+  padding: 0 24px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.activity-summary-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f5f8f1;
+  border: 1px solid #e6eee0;
+  font-size: 11px;
+  color: #5b6d55;
+}
+.activity-summary-strip b {
+  color: #1c3d32;
+  font-weight: 700;
+}
+.activity-summary-strip i {
+  font-style: normal;
+  color: #bcc7b2;
+}
+.activity-summary-strip .rate-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #1a5945;
+  color: #e2f7ca;
+  font-weight: 700;
+  font-size: 10.5px;
+}
+.activity-ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.activity-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border-radius: 11px;
+  background: rgba(248, 250, 245, 0.92);
+  border: 1px solid #e9efe3;
+  min-width: 0;
+}
+.activity-rank-row.top-1 {
+  background: linear-gradient(135deg, #fffbeb 0%, #f6fbf3 100%);
+  border-color: #fde68a;
+}
+.activity-rank-row.top-2 {
+  background: linear-gradient(135deg, #f8fafc 0%, #f4f8f2 100%);
+  border-color: #cbd5e1;
+}
+.activity-rank-row.top-3 {
+  background: linear-gradient(135deg, #fff7ed 0%, #f6faf4 100%);
+  border-color: #fed7aa;
+}
+.activity-rank-row.zero-chat {
+  opacity: 0.78;
+}
+.activity-rank-num {
+  flex-shrink: 0;
+  min-width: 44px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7c8b74;
+  font-variant-numeric: tabular-nums;
+}
+.activity-rank-num.medal-1 {
+  color: #b45309;
+}
+.activity-rank-num.medal-2 {
+  color: #475569;
+}
+.activity-rank-num.medal-3 {
+  color: #9a3412;
+}
+.activity-bar-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.activity-user-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.activity-user-line b {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f362b;
+  overflow-wrap: anywhere;
+}
+.activity-left-tag {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #64748b;
+  font-weight: 600;
+}
+.activity-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #e7eee1;
+  overflow: hidden;
+}
+.activity-progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2d7a5e, #5ca87c);
+  transition: width 0.25s ease;
+}
+.activity-progress-track i.fill-1 {
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+.activity-progress-track i.fill-2 {
+  background: linear-gradient(90deg, #475569, #64748b);
+}
+.activity-progress-track i.fill-3 {
+  background: linear-gradient(90deg, #c2410c, #ea580c);
+}
+.activity-count-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+.activity-count-col strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1a4d3a;
+}
+.activity-count-col strong small {
+  font-size: 9.5px;
+  margin-left: 2px;
+  color: #7c8d75;
+  font-weight: 500;
+}
+.activity-share {
+  font-size: 9.5px;
+  color: #879680;
+}
+.presentation-window .activity-ranking-wrap {
+  padding: 0 18px 10px;
+}
+.presentation-window .activity-ranking-list {
+  max-height: 290px;
+}
+@media (max-width: 720px) {
+  .activity-ranking-wrap {
+    padding: 0 14px 12px;
+  }
+  .segmented button {
+    padding: 7px 10px;
+  }
+}

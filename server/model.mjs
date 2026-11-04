@@ -456,3 +456,115 @@ export function keywords(state, scope = "recent", now = Date.now()) {
     .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word, "ko"))
     .slice(0, 30);
 }
+
+export function activityRanking(
+  state,
+  scope = "all",
+  now = Date.now(),
+  onlineParticipants = [],
+) {
+  if (!state) return [];
+  const liveMap = new Map(
+    (onlineParticipants || []).map((u) => [u.id, u]),
+  );
+  const roomClosed = state.room?.status === "closed";
+  const entries = new Map();
+
+  if (liveMap.has("owner")) {
+    const ownerLive = liveMap.get("owner");
+    entries.set("owner", {
+      id: "owner",
+      nickname: ownerLive.nickname || "관리자",
+      role: "owner",
+      device: ownerLive.device || "pc",
+      status: roomClosed ? null : ownerLive.status || "online",
+      left: false,
+      joinedAt: state.room?.createdAt || 0,
+      count: 0,
+      lastMessageAt: 0,
+    });
+  }
+
+  for (const p of Object.values(state.participants || {})) {
+    if (!p || p.kicked) continue;
+    if (!roomClosed && p.left) continue;
+    const live = liveMap.get(p.id);
+    entries.set(p.id, {
+      id: p.id,
+      nickname: p.nickname,
+      role: "guest",
+      device: p.device || live?.device || "pc",
+      status: roomClosed || p.left ? null : live?.status || "away",
+      left: Boolean(p.left),
+      joinedAt: p.joinedAt || 0,
+      count: 0,
+      lastMessageAt: 0,
+    });
+  }
+
+  for (const m of state.messages || []) {
+    if (
+      m.deleted ||
+      m.role === "ai" ||
+      !m.participantId ||
+      (scope !== "all" && m.at < now - 300000)
+    ) {
+      continue;
+    }
+    let row = entries.get(m.participantId);
+    if (!row) {
+      const p = state.participants?.[m.participantId];
+      if (p?.kicked) continue;
+      const live = liveMap.get(m.participantId);
+      const isOwner = m.role === "owner" || m.participantId === "owner";
+      row = {
+        id: m.participantId,
+        nickname: p?.nickname || m.nickname || (isOwner ? "관리자" : "참여자"),
+        role: isOwner ? "owner" : "guest",
+        device: p?.device || m.device || live?.device || "pc",
+        status:
+          roomClosed || p?.left ? null : live ? live.status || "online" : null,
+        left: Boolean(p?.left),
+        joinedAt: p?.joinedAt || m.at || 0,
+        count: 0,
+        lastMessageAt: 0,
+      };
+      entries.set(m.participantId, row);
+    }
+    row.count += 1;
+    if ((m.at || 0) > row.lastMessageAt) row.lastMessageAt = m.at || 0;
+  }
+
+  const sorted = [...entries.values()].sort(
+    (a, b) =>
+      b.count - a.count ||
+      b.lastMessageAt - a.lastMessageAt ||
+      (a.joinedAt || 0) - (b.joinedAt || 0) ||
+      a.nickname.localeCompare(b.nickname, "ko"),
+  );
+
+  const totalMessages = sorted.reduce((sum, r) => sum + r.count, 0);
+  const maxCount = sorted[0]?.count || 0;
+  let prevRank = 1;
+
+  return sorted.map((r, idx) => {
+    const rank =
+      idx > 0 && r.count === sorted[idx - 1].count ? prevRank : idx + 1;
+    prevRank = rank;
+    return {
+      id: r.id,
+      rank,
+      order: idx + 1,
+      nickname: r.nickname,
+      role: r.role,
+      device: r.device,
+      status: r.status,
+      left: r.left,
+      count: r.count,
+      lastMessageAt: r.lastMessageAt || null,
+      percentage:
+        totalMessages > 0 ? Math.round((r.count / totalMessages) * 100) : 0,
+      ratio: maxCount > 0 ? Math.round((r.count / maxCount) * 100) : 0,
+    };
+  });
+}
